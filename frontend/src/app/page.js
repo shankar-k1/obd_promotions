@@ -403,12 +403,12 @@ export default function Dashboard() {
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', border: '1px solid var(--accent-cyan)', background: 'rgba(34, 211, 238, 0.05)' }}
               onClick={async () => {
                 try {
-                  const res = await fetch(`${API_URL}/verify-email`);
+                  const res = await fetch(`${API_BASE}/verify-email`);
                   const data = await res.json();
                   if (res.ok) alert(`SUCCESS: ${data.message}`);
                   else alert(`ERROR: ${data.detail || 'Email verification failed'}`);
                 } catch (err) {
-                  alert('Network Error. Is backend live?');
+                  alert(`Network Error: ${err.message}. Is backend live at ${API_BASE}?`);
                 }
               }}
             >
