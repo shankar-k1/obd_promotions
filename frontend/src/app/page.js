@@ -378,15 +378,15 @@ export default function Dashboard() {
             Step 4: Scrubber Configuration
             <span className="text-ghost ml-auto text-[10px]">Filter Logic & Execution</span>
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Object.keys(scrubOptions).map((opt) => (
-              <div key={opt} className="glass-card-interactive flex items-center gap-4"
+              <div key={opt} className="glass-card-interactive flex items-center gap-3 py-3"
                 onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
               >
-                <div className={`flex items-center justify-center rounded-lg border-2 border-cyan-400 transition-all ${scrubOptions[opt] ? 'bg-cyan-400 border-cyan-400' : 'bg-transparent border-slate-700'}`} style={{ width: '22px', height: '22px' }}>
-                  {scrubOptions[opt] && <CheckCircle2 size={16} strokeWidth={3} color="#020617" />}
+                <div className={`flex items-center justify-center rounded-lg border-2 border-cyan-400 transition-all ${scrubOptions[opt] ? 'bg-cyan-400 border-cyan-400' : 'bg-transparent border-slate-700'}`} style={{ width: '18px', height: '18px' }}>
+                  {scrubOptions[opt] && <CheckCircle2 size={12} strokeWidth={3} color="#020617" />}
                 </div>
-                <span className="text-xs font-bold uppercase tracking-widest">
+                <span className="text-[10px] font-bold uppercase tracking-widest">
                   <span style={{ color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--text-dim)' }}>{opt}</span> FILTER
                 </span>
               </div>
