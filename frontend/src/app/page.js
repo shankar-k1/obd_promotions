@@ -128,8 +128,13 @@ export default function Dashboard() {
         final: data.final_base_count
       }));
       setCleanedMsisdns(data.final_base || []);
+
+      if (data.email_status && data.email_status.startsWith('FAILED')) {
+        alert(`Scrubbing Complete, but Report Email Failed: ${data.email_status}`);
+      }
     } catch (err) {
       console.error("Scrubbing failed", err);
+      alert(`Scrubbing Failed: ${err.message || 'Network Error'}. Check file size or backend status.`);
     } finally {
       setLoading(false);
     }
