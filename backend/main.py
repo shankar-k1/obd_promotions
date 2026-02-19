@@ -152,11 +152,16 @@ async def get_db_stats():
 @app.post("/schedule-promotion")
 async def schedule_promotion(request: ScheduleRequest):
     """Saves scheduling details for a promotion."""
-    success = db.save_scheduling_details(request.dict())
-    if success:
-        return {"status": "success", "message": "Promotion scheduled successfully"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to save scheduling details")
+    try:
+        success = db.save_scheduling_details(request.model_dump())
+        if success:
+            return {"status": "success", "message": "Promotion scheduled successfully"}
+        else:
+            error_msg = getattr(db, 'last_error', 'Unknown database error')
+            raise HTTPException(status_code=500, detail=error_msg)
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health-check")
 async def health_check():

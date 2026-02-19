@@ -132,7 +132,8 @@ class DatabaseModule:
                 connection.commit()
                 return True
         except Exception as e:
-            print(f"Save Scheduling Error: {e}")
+            self.last_error = f"Save Scheduling Error: {str(e)}"
+            print(self.last_error)
             return False
 
     def execute_query(self, query, params=None):
