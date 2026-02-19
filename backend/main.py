@@ -147,7 +147,7 @@ async def get_db_stats():
             }
     except Exception as e:
         print(f"DB Stats Error: {e}")
-        return {"dnd_count": f"ERR: {str(e)[:20]}...", "sub_count": "ERR", "unsub_count": "ERR"}
+        return {"dnd_count": f"ERR: {str(e)}", "sub_count": "ERR", "unsub_count": "ERR"}
 
 @app.post("/schedule-promotion")
 async def schedule_promotion(request: ScheduleRequest):
