@@ -61,6 +61,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [dbStats, setDbStats] = useState({ dnd_count: null, sub_count: null, unsub_count: null });
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [backendStatus, setBackendStatus] = useState('Checking...');
+  const [apiColor, setApiColor] = useState('var(--text-dim)');
   const [scheduleData, setScheduleData] = useState({
     obd_name: '',
     flow_name: '',
@@ -88,12 +90,16 @@ export default function Dashboard() {
     fetch(`${API_BASE}/db-stats`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        setBackendStatus('Connected');
+        setApiColor('var(--accent-emerald)');
         return res.json();
       })
       .then(data => setDbStats(data))
       .catch((err) => {
         console.error("Failed to fetch DB stats:", err);
-        setDbStats({ dnd_count: `ERR (${API_BASE})`, sub_count: 'ERR', unsub_count: 'ERR' });
+        setBackendStatus('Disconnected');
+        setApiColor('var(--accent-rose)');
+        setDbStats({ dnd_count: `ERR`, sub_count: 'ERR', unsub_count: 'ERR' });
       });
   }, []);
 
@@ -113,6 +119,16 @@ export default function Dashboard() {
           options: scrubOptions
         }),
       });
+
+      if (res.status === 413) {
+        throw new Error("File too large for cloud transfer. Please split your file into smaller chunks (e.g. 50k names).");
+      }
+
+      if (!res.ok) {
+        const errInfo = await res.json();
+        throw new Error(errInfo.detail || `Server returned ${res.status}`);
+      }
+
       const data = await res.json();
 
       setSessionStats({
@@ -217,9 +233,17 @@ export default function Dashboard() {
           <h1 className="logo-text">OBD OUTSMART</h1>
           <p className="subtitle">Automated Content & Scrubber Intelligence</p>
         </div>
-        <button className="theme-toggle" onClick={toggleTheme}>
-          {theme === 'dark' ? '☀️ Switch to Light' : '🌙 Switch to Dark'}
-        </button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white-5 border border-white-10">
+            <div className="animate-pulse w-2 h-2 rounded-full" style={{ backgroundColor: apiColor }}></div>
+            <span className="text-[10px] uppercase tracking-tighter font-bold" style={{ color: apiColor }}>
+              Backend: {backendStatus}
+            </span>
+          </div>
+          <button className="theme-toggle" onClick={toggleTheme}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </div>
       </header>
 
       <motion.div
