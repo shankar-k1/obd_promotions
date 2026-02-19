@@ -164,38 +164,42 @@ class DatabaseModule:
             expanded.add(f"234{m}")
         return list(expanded)
 
-    def check_dnd_bulk(self, msisdns):
-        """Checks which MSISDNs are in the DND list using multi-format expansion."""
+    def _chunked_lookup(self, msisdns, query_template, extra_params=None):
+        """Processes large MSISDN lists in batches to handle cloud DB limits."""
         if not msisdns:
             return []
+            
+        expanded = self._expand_msisdns(msisdns)
+        results = []
+        chunk_size = 5000
         
-        expanded_msisdns = self._expand_msisdns(msisdns)
-        query = text("SELECT msisdn FROM dnd_list WHERE msisdn IN :msisdns").bindparams(
-            bindparam("msisdns", expanding=True)
-        )
-        res = self.execute_query(query, {"msisdns": expanded_msisdns})
-        return [row['msisdn'] for row in res]
+        for i in range(0, len(expanded), chunk_size):
+            chunk = expanded[i:i + chunk_size]
+            params = {"msisdns": chunk}
+            if extra_params:
+                params.update(extra_params)
+            
+            # Using bindparams(expanding=True) for SQL 'IN' clause optimization
+            query = text(query_template).bindparams(
+                bindparam("msisdns", expanding=True)
+            )
+            
+            chunk_results = self.execute_query(query, params)
+            results.extend([row['msisdn'] for row in chunk_results if 'msisdn' in row])
+            
+        return list(set(results)) # Deduplicate matches
+
+    def check_dnd_bulk(self, msisdns):
+        """Checks which given MSISDNs are in the DND list (Batch-Optimized)."""
+        query = "SELECT msisdn FROM dnd_list WHERE msisdn IN :msisdns"
+        return self._chunked_lookup(msisdns, query)
 
     def check_subscriptions_bulk(self, msisdns, service_id="PROMO"):
-        """Checks which MSISDNs are subscribed using multi-format expansion."""
-        if not msisdns:
-            return []
-        
-        expanded_msisdns = self._expand_msisdns(msisdns)
-        query = text("SELECT msisdn FROM subscriptions WHERE service_id = :service_id AND status = 'ACTIVE' AND msisdn IN :msisdns").bindparams(
-            bindparam("msisdns", expanding=True)
-        )
-        res = self.execute_query(query, {"msisdns": expanded_msisdns, "service_id": service_id})
-        return [row['msisdn'] for row in res]
+        """Checks which MSISDNs are already subscribed (Batch-Optimized)."""
+        query = "SELECT msisdn FROM subscriptions WHERE service_id = :service_id AND status = 'ACTIVE' AND msisdn IN :msisdns"
+        return self._chunked_lookup(msisdns, query, {"service_id": service_id})
 
     def check_unsubscriptions_bulk(self, msisdns):
-        """Checks which MSISDNs are in the unsubscriptions table using multi-format expansion."""
-        if not msisdns:
-            return []
-        
-        expanded_msisdns = self._expand_msisdns(msisdns)
-        query = text("SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns").bindparams(
-            bindparam("msisdns", expanding=True)
-        )
-        res = self.execute_query(query, {"msisdns": expanded_msisdns})
-        return [row['msisdn'] for row in res]
+        """Checks which MSISDNs have unsubscribed (Batch-Optimized)."""
+        query = "SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns"
+        return self._chunked_lookup(msisdns, query)
