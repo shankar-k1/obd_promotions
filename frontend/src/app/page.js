@@ -393,6 +393,23 @@ export default function Dashboard() {
             ))}
           </div>
           <div className="flex flex-wrap md:flex-nowrap gap-4 mt-10">
+            <button
+              className="btn-secondary"
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', border: '1px solid var(--accent-cyan)', background: 'rgba(34, 211, 238, 0.05)' }}
+              onClick={async () => {
+                try {
+                  const res = await fetch(`${API_URL}/verify-email`);
+                  const data = await res.json();
+                  if (res.ok) alert(`SUCCESS: ${data.message}`);
+                  else alert(`ERROR: ${data.detail || 'Email verification failed'}`);
+                } catch (err) {
+                  alert('Network Error. Is backend live?');
+                }
+              }}
+            >
+              <Zap size={14} className="text-cyan-400" />
+              VERIFY EMAIL
+            </button>
             <button className="btn-primary" style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }} onClick={handleRunScrub} disabled={loading}>
               <Zap size={18} fill="currentColor" />
               {loading ? 'Sychronizing Datasets...' : 'EXECUTE SCRUBBING PIPELINE'}
