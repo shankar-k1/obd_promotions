@@ -73,7 +73,7 @@ class DatabaseModule:
                 id SERIAL PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
                 service_id VARCHAR(50) DEFAULT 'PROMO',
-                unsubscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                unsub_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         ]
