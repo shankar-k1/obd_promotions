@@ -31,16 +31,24 @@ class DatabaseModule:
                 if "://" in url and not url.startswith("postgresql+psycopg2"):
                     url = url.replace("://", "+psycopg2://", 1)
                 
+                # Handle Supabase/Transaction Pooler prepared statement issues
+                if ":6543" in url:
+                    if "?" not in url:
+                        url += "?prepare_threshold=0"
+                    elif "prepare_threshold" not in url:
+                        url += "&prepare_threshold=0"
+                
                 # Ensure sslmode=require for cloud services
                 if "supabase" in url or "render" in url:
-                    if "?" not in url:
-                        url += "?sslmode=require"
-                    elif "sslmode" not in url:
-                        url += "&sslmode=require"
+                    if "sslmode" not in url:
+                        if "?" not in url: url += "?sslmode=require"
+                        else: url += "&sslmode=require"
                 
                 self.engine = create_engine(
                     url, 
                     pool_pre_ping=True,
+                    pool_recycle=300, # Recycle connections every 5 mins
+                    pool_timeout=30,
                     connect_args={"sslmode": "require"} if "sslmode=require" in url else {}
                 )
             elif url:
