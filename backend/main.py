@@ -139,13 +139,24 @@ async def schedule_promotion(request: ScheduleRequest):
 @app.get("/health-check")
 async def health_check():
     """Monitors the current promotion health and database connectivity."""
-    db_status = "Connected" if db.engine and db.engine.connect() else "Disconnected"
+    db_status = "Disconnected"
+    db_host = "N/A"
+    try:
+        if db.engine:
+            with db.engine.connect() as conn:
+                db_status = "Connected"
+                # Extract host safely for diagnostic display
+                db_host = str(db.engine.url.host) if db.engine.url else "unknown"
+    except Exception as e:
+        db_status = f"Error: {str(e)}"
+
     mock_stats = {"success_rate": 0.45, "unsub_rate": 0.01}
     alerts = alerting_system.check_promotion_health(mock_stats)
     return {
         "status": "Monitoring", 
         "database": db_status,
-        "database_type": os.getenv("DB_TYPE", "unknown"),
+        "connected_to": db_host,
+        "database_type": db.db_type,
         "alerts": alerts
     }
 
