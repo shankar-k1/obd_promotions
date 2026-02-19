@@ -31,6 +31,7 @@ async def root_diagnostic():
         "message": "Outsmart OBD API is Live (FastAPI)",
         "db_configured": db_url is not None,
         "db_url_status": masked_url,
+        "db_init_status": "OK" if not db.init_error else f"FAIL: {db.init_error}",
         "db_type": os.getenv("DB_TYPE", "postgresql"),
         "host": os.getenv("RENDER_HOSTNAME", "localhost")
     }
