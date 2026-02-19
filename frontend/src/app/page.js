@@ -3,6 +3,28 @@ import React, { useState, useEffect } from 'react';
 import PerformanceReport from '@/components/PerformanceReport';
 import MermaidViewer from '@/components/MermaidViewer';
 import FileUploadZone from '@/components/FileUploadZone';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Database,
+  ShieldCheck,
+  Zap,
+  BarChart3,
+  Wand2,
+  Layout,
+  ChevronRight,
+  Download,
+  Calendar,
+  Copy,
+  UploadCloud,
+  Smartphone,
+  Info,
+  CheckCircle2,
+  XCircle,
+  Activity
+} from 'lucide-react';
+const API_BASE = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+  ? 'http://localhost:8000'
+  : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function Dashboard() {
   const [counts, setCounts] = useState({ total: 0, scrubbed: 0, final: 0 });
@@ -51,7 +73,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetch('http://localhost:8000/db-stats')
+    fetch(`${API_BASE}/db-stats`)
       .then(res => res.json())
       .then(data => setDbStats(data))
       .catch(() => setDbStats({ dnd_count: 'N/A', sub_count: 'N/A', unsub_count: 'N/A' }));
@@ -65,7 +87,7 @@ export default function Dashboard() {
 
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/scrub', {
+      const res = await fetch(`${API_BASE}/scrub`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -147,7 +169,7 @@ export default function Dashboard() {
     try {
       const formData = new FormData();
       formData.append('doc_text', docText);
-      const res = await fetch('http://localhost:8000/generate-flow-from-doc', {
+      const res = await fetch(`${API_BASE}/generate-flow-from-doc`, {
         method: 'POST',
         body: formData,
       });
@@ -177,200 +199,302 @@ export default function Dashboard() {
         </button>
       </header>
 
-      <div className="sequential-flow-container">
+      <motion.div
+        className="sequential-flow-container"
+        initial="hidden"
+        animate="visible"
+        variants={{
+          visible: { transition: { staggerChildren: 0.1 } }
+        }}
+      >
         {/* STEP 1: DATA INJECTION */}
-        <section className="glass-panel sequential-step">
-          <div className="step-badge">1</div>
+        <motion.section
+          className="glass-panel sequential-step"
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><UploadCloud size={20} /></div>
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-cyan)' }}></span>
             Step 1: Data Injection
+            <span className="text-ghost ml-auto text-[10px]">Lead Base Upload</span>
           </h2>
           <div style={{ maxWidth: '600px', margin: '0 auto' }}>
             <FileUploadZone onUploadSuccess={handleFileUpload} />
           </div>
-        </section>
+        </motion.section>
 
         {/* STEP 2: DATABASE ANALYTICS */}
-        <section className="glass-panel sequential-step">
-          <div className="step-badge">2</div>
+        <motion.section
+          className="glass-panel sequential-step"
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Database size={20} /></div>
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
             Step 2: Database Analytics
+            <span className="text-ghost ml-auto text-[10px]">Global Cross-Reference</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="flex items-center justify-between p-4 bg-white-5 rounded-2xl border-white-5">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Global DND List</span>
-              <span className="text-lg font-bold text-emerald-400">
+            <div className="flex items-center justify-between p-6 bg-white-5 rounded-2xl border-white-5 glass-pill">
+              <div className="flex items-center gap-3">
+                <ShieldCheck className="text-emerald-400" size={18} />
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Global DND List</span>
+              </div>
+              <span className="text-xl font-bold text-emerald-400">
                 {dbStats.dnd_count === null ? '...' : dbStats.dnd_count.toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between p-4 bg-white-5 rounded-2xl border-white-5">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Subscriptions</span>
-              <span className="text-lg font-bold text-cyan-400">
+            <div className="flex items-center justify-between p-6 bg-white-5 rounded-2xl border-white-5 glass-pill">
+              <div className="flex items-center gap-3">
+                <Smartphone className="text-cyan-400" size={18} />
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Subscriptions</span>
+              </div>
+              <span className="text-xl font-bold text-cyan-400">
                 {dbStats.sub_count === null ? '...' : dbStats.sub_count.toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between p-4 bg-white-5 rounded-2xl border-white-5">
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Unsubscribe Archive</span>
-              <span className="text-lg font-bold text-rose-400">
+            <div className="flex items-center justify-between p-6 bg-white-5 rounded-2xl border-white-5 glass-pill">
+              <div className="flex items-center gap-3">
+                <XCircle className="text-rose-400" size={18} />
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Unsubscribe Archive</span>
+              </div>
+              <span className="text-xl font-bold text-rose-400">
                 {dbStats.unsub_count === null ? '...' : dbStats.unsub_count.toLocaleString()}
               </span>
             </div>
           </div>
-        </section>
+        </motion.section>
 
         {/* STEP 3: VERIFICATION INTELLIGENCE */}
-        <section className="glass-panel sequential-step">
-          <div className="step-badge">3</div>
+        <motion.section
+          className="glass-panel sequential-step"
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><ShieldCheck size={20} /></div>
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-purple)' }}></span>
             Step 3: Verification Intelligence
+            <span className="text-ghost ml-auto text-[10px]">Scrubbing Outcome Preview</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '30px' }}>
-              <div className="stat-label" style={{ marginBottom: 0, color: 'var(--text-muted)' }}>Initial Lead Load</div>
-              <div className="stat-value" style={{ color: 'var(--accent-blue)', fontSize: '2rem', marginLeft: 'auto' }}>
+            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '32px' }}>
+              <div className="flex flex-col">
+                <div className="stat-label" style={{ marginBottom: 4, color: 'var(--text-muted)' }}>Initial Lead Load</div>
+                <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1"><Info size={10} /> Total input volume</div>
+              </div>
+              <div className="stat-value" style={{ color: 'var(--accent-blue)', fontSize: '2.5rem', marginLeft: 'auto' }}>
                 {loading ? <span className="text-sm animate-pulse">Syncing...</span> : counts.total.toLocaleString()}
               </div>
             </div>
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '30px', borderLeft: '4px solid var(--accent-emerald)' }}>
-              <div className="stat-label" style={{ marginBottom: 0, color: 'var(--text-muted)' }}>Verified Clean Base</div>
-              <div className="stat-value" style={{ color: 'var(--accent-emerald)', fontSize: '2rem', marginLeft: 'auto' }}>
+            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '32px', borderLeft: '6px solid var(--accent-emerald)' }}>
+              <div className="flex flex-col">
+                <div className="stat-label" style={{ marginBottom: 4, color: 'var(--text-muted)' }}>Verified Clean Base</div>
+                <div className="text-[10px] text-emerald-400/60 font-bold flex items-center gap-1"><CheckCircle2 size={10} /> Campaign ready</div>
+              </div>
+              <div className="stat-value" style={{ color: 'var(--accent-emerald)', fontSize: '2.5rem', marginLeft: 'auto' }}>
                 {loading ? <span className="text-sm animate-pulse">Wait...</span> : counts.final.toLocaleString()}
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
-              <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.65rem', color: 'var(--accent-purple)' }}>DND Removals</div>
-              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.2rem', marginLeft: 'auto' }}>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-purple)' }}>DND Removals</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
                 {sessionStats.dnd.toLocaleString()}
               </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-purple-400" style={{ width: counts.total ? `${(sessionStats.dnd / counts.total) * 100}%` : '0%' }}></div>
+              </div>
             </div>
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
-              <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.65rem', color: 'var(--accent-cyan)' }}>Sub Removals</div>
-              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.2rem', marginLeft: 'auto' }}>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-cyan)' }}>Sub Removals</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
                 {sessionStats.sub.toLocaleString()}
               </div>
-            </div>
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
-              <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.65rem', color: '#f87171' }}>Unsub Blocks</div>
-              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.2rem', marginLeft: 'auto' }}>
-                {sessionStats.unsub.toLocaleString()}
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-cyan-400" style={{ width: counts.total ? `${(sessionStats.sub / counts.total) * 100}%` : '0%' }}></div>
               </div>
             </div>
-            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 20px' }}>
-              <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.65rem', color: 'var(--accent-blue)' }}>Operator Filter</div>
-              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.2rem', marginLeft: 'auto' }}>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: '#f87171' }}>Unsub Blocks</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
+                {sessionStats.unsub.toLocaleString()}
+              </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-red-400" style={{ width: counts.total ? `${(sessionStats.unsub / counts.total) * 100}%` : '0%' }}></div>
+              </div>
+            </div>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-blue)' }}>Operator Filter</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
                 {sessionStats.operator.toLocaleString()}
+              </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-blue-400" style={{ width: counts.total ? `${(sessionStats.operator / counts.total) * 100}%` : '0%' }}></div>
               </div>
             </div>
           </div>
-        </section>
+        </motion.section>
 
         {/* STEP 4: SCRUBBING CONFIGURATION */}
-        <section className="glass-panel sequential-step">
-          <div className="step-badge">4</div>
+        <motion.section
+          className="glass-panel sequential-step"
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Zap size={20} /></div>
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-blue)' }}></span>
             Step 4: Scrubber Configuration
+            <span className="text-ghost ml-auto text-[10px]">Filter Logic & Execution</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {Object.keys(scrubOptions).map((opt) => (
-              <div key={opt} className="flex items-center gap-4 p-4 bg-white-5 rounded-2xl border-white-5 cursor-pointer hover:border-cyan-400 transition-all glow-hover"
+              <div key={opt} className="glass-card-interactive flex items-center gap-4"
                 onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
               >
-                <div className={`flex items-center justify-center rounded-full border-2 border-cyan-400 ${scrubOptions[opt] ? 'bg-cyan-400' : ''}`} style={{ width: '20px', height: '20px' }}>
-                  {scrubOptions[opt] && <div className="rounded-full" style={{ width: '8px', height: '8px', background: '#05070a' }}></div>}
+                <div className={`flex items-center justify-center rounded-lg border-2 border-cyan-400 transition-all ${scrubOptions[opt] ? 'bg-cyan-400 border-cyan-400' : 'bg-transparent border-slate-700'}`} style={{ width: '22px', height: '22px' }}>
+                  {scrubOptions[opt] && <CheckCircle2 size={16} strokeWidth={3} color="#020617" />}
                 </div>
-                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                  <span style={{ color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'inherit' }}>{opt}</span> FILTER
+                <span className="text-xs font-bold uppercase tracking-widest">
+                  <span style={{ color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--text-dim)' }}>{opt}</span> FILTER
                 </span>
               </div>
             ))}
           </div>
-          <div className="flex gap-4 mt-8">
-            <button className="btn-primary" style={{ flex: 2 }} onClick={handleRunScrub} disabled={loading}>{loading ? 'Processing...' : '🚀 Execute Scrubbing Pipeline'}</button>
-            <button className="btn-secondary" style={{ flex: 1 }} onClick={downloadCleanedBase} disabled={cleanedMsisdns.length === 0}>📥 Export Final Base</button>
+          <div className="flex flex-wrap md:flex-nowrap gap-4 mt-10">
+            <button className="btn-primary" style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }} onClick={handleRunScrub} disabled={loading}>
+              <Zap size={18} fill="currentColor" />
+              {loading ? 'Sychronizing Datasets...' : 'EXECUTE SCRUBBING PIPELINE'}
+            </button>
+            <button className="btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={downloadCleanedBase} disabled={cleanedMsisdns.length === 0}>
+              <Download size={16} />
+              EXPORT CSV
+            </button>
             <button
               className="btn-primary"
-              style={{ flex: 1, background: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--bg-glass)', opacity: cleanedMsisdns.length > 0 ? 1 : 0.4 }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--bg-glass)', opacity: cleanedMsisdns.length > 0 ? 1 : 0.4 }}
               onClick={() => setIsScheduleModalOpen(true)}
               disabled={cleanedMsisdns.length === 0}
             >
-              🗓️ Schedule
+              <Calendar size={16} />
+              SCHEDULE
             </button>
           </div>
-        </section>
+        </motion.section>
 
         {/* STEP 5: VERIFIED RESULTS TERMINAL */}
-        {cleanedMsisdns.length > 0 && (
-          <section className="glass-panel sequential-step">
-            <div className="step-badge">5</div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
-              Step 5: Verified Results Terminal
-            </h2>
-            <div className="flex justify-between items-center mb-3">
-              <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Session MSISDN Output</div>
-              <button
-                style={{ background: 'var(--accent-emerald)', color: '#05070a', fontSize: '10px', fontWeight: 800, padding: '4px 10px', borderRadius: '6px' }}
-                onClick={() => {
-                  navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
-                  alert('Copied to clipboard!');
-                }}
-              >
-                COPY ALL
-              </button>
-            </div>
-            <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '16px', border: '1px solid var(--glass-border)', padding: '16px', height: '180px', overflowY: 'auto' }}>
-              <pre style={{ fontSize: '0.8rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.5' }}>{cleanedMsisdns.join('\n')}</pre>
-            </div>
-          </section>
-        )}
+        <AnimatePresence>
+          {cleanedMsisdns.length > 0 && (
+            <motion.section
+              className="glass-panel sequential-step"
+              initial={{ opacity: 0, height: 0, marginTop: -40 }}
+              animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
+              exit={{ opacity: 0, height: 0 }}
+            >
+              <div className="step-badge"><Layout size={20} /></div>
+              <h2 className="panel-title">
+                <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
+                Step 5: Verified Results Output
+                <span className="text-ghost ml-auto text-[10px]">Real-time Terminal View</span>
+              </h2>
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Live Session MSISDN Feed</span>
+                </div>
+                <button
+                  className="glass-pill text-[10px] font-bold text-emerald-400 hover:bg-emerald-400 hover:text-black transition-all"
+                  onClick={() => {
+                    navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
+                    alert('Copied to clipboard!');
+                  }}
+                >
+                  <Copy size={12} className="inline mr-2" />
+                  COPY ALL TO CLIPBOARD
+                </button>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '20px', border: '1px solid var(--glass-border)', padding: '24px', height: '220px', overflowY: 'auto' }}>
+                <pre style={{ fontSize: '0.85rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.6' }}>{cleanedMsisdns.join('\n')}</pre>
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {/* STEP 6: AI CAMPAIGN STUDIO */}
-        <section className="glass-panel sequential-step">
-          <div className="step-badge">6</div>
+        <motion.section
+          className="glass-panel sequential-step"
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Wand2 size={20} /></div>
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-rose)' }}></span>
             Step 6: AI Campaign Studio
+            <span className="text-ghost ml-auto text-[10px]">Content & Flow Engineering</span>
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="label">Script & Flow Strategy</label>
-              <textarea
-                className="input-field"
-                rows="8"
-                placeholder="Describe your promotion goals..."
-                value={docText}
-                onChange={(e) => setDocText(e.target.value)}
-              />
-              <button className="btn-primary w-full mt-4" onClick={generateFlowFromDoc} disabled={flowLoading}>
-                {flowLoading ? '🧠 Engineering Flow...' : '✨ Generate AI Prompt Flow'}
-              </button>
-              {flowError && <div style={{ color: '#f87171', marginTop: '10px', fontSize: '0.8rem' }}>{flowError}</div>}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+            <div className="flex flex-col gap-6">
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="label flex items-center gap-2"><BarChart3 size={14} /> Campaign Strategy & Script Goals</label>
+                <textarea
+                  className="input-field"
+                  rows="10"
+                  placeholder="e.g. Create a holiday promotion for prepaid users with a 20% bonus offer. Keep it high energy..."
+                  value={docText}
+                  onChange={(e) => setDocText(e.target.value)}
+                />
+                <button className="btn-primary w-full mt-6" style={{ background: 'var(--accent-rose)' }} onClick={generateFlowFromDoc} disabled={flowLoading}>
+                  <Wand2 size={18} className="mr-2 inline" />
+                  {flowLoading ? 'THINKING...' : 'GENERATE AI CAMPAIGN PROMPT'}
+                </button>
+                {flowError && <div className="mt-4 p-4 rounded-xl bg-red-400/10 border border-red-400/20 text-red-400 text-xs font-bold leading-relaxed">{flowError}</div>}
+              </div>
             </div>
-            <div>
-              <label className="label">Live Design View</label>
-              <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '24px', border: '1px solid var(--glass-border)', padding: '24px', minHeight: '340px' }}>
-                {!mermaidFlow && <div style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '100px' }}>Waiting for campaign design...</div>}
+            <div className="flex flex-col">
+              <label className="label flex items-center gap-2"><Layout size={14} /> Design Visualization</label>
+              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '28px', border: '1px solid var(--glass-border)', padding: '32px', minHeight: '380px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {!mermaidFlow && (
+                  <div className="flex flex-col items-center gap-4 text-slate-500">
+                    <Activity size={48} strokeWidth={1} className="opacity-20 translate-y-2 animate-bounce" />
+                    <span className="text-xs font-bold uppercase tracking-[0.2em]">Awaiting Campaign Design...</span>
+                  </div>
+                )}
                 {mermaidFlow && (
-                  <div className="mermaid-box">
+                  <div className="mermaid-box w-full h-full shadow-2xl">
                     <MermaidViewer chart={mermaidFlow} />
                   </div>
                 )}
               </div>
             </div>
           </div>
-        </section>
+        </motion.section>
 
         {/* Performance Overview */}
-        <section style={{ gridColumn: '1 / -1', marginTop: '40px' }}>
+        <motion.section
+          style={{ gridColumn: '1 / -1', marginTop: '60px' }}
+          variants={{
+            hidden: { opacity: 0 },
+            visible: { opacity: 1 }
+          }}
+        >
           <PerformanceReport />
-        </section>
-      </div>
+        </motion.section>
+      </motion.div>
 
       {/* MODAL OVERLAY */}
       {isScheduleModalOpen && (
@@ -410,7 +534,7 @@ export default function Dashboard() {
               <button className="btn-primary"
                 onClick={async () => {
                   try {
-                    const res = await fetch('http://localhost:8000/schedule-promotion', {
+                    const res = await fetch(`${API_BASE}/schedule-promotion`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(scheduleData)

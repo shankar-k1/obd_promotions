@@ -7,23 +7,29 @@ load_dotenv()
 
 class DatabaseModule:
     def __init__(self):
-        self.db_type = os.getenv("DB_TYPE", "mysql")
-        self.host = os.getenv("DB_HOST", "localhost")
-        self.user = os.getenv("DB_USER", "root")
-        self.password = os.getenv("DB_PASS", "shan2001")
-        self.dbname = os.getenv("DB_NAME", "obd_db")
+        self.db_type = os.getenv("DB_TYPE", "postgresql") # Default to postgresql for Supabase
+        self.url = os.getenv("DATABASE_URL")
         
-        if self.db_type == "sqlite":
-            self.url = f"sqlite:///./{self.dbname}.db"
-            self.engine = create_engine(self.url)
-        else:
-            # Use connect_args for the database name to handle spaces/special characters safely
-            self.url = f"{self.db_type}+mysqlconnector://{self.user}:{self.password}@{self.host}/"
-            try:
-                self.engine = create_engine(self.url, connect_args={"database": self.dbname})
-            except Exception as e:
-                print(f"Error initializing database: {e}")
+        if not self.url:
+            # Fallback to component-based URL if DATABASE_URL is not provided
+            user = os.getenv("DB_USER", "postgres")
+            password = os.getenv("DB_PASS", "")
+            host = os.getenv("DB_HOST", "localhost")
+            port = os.getenv("DB_PORT", "5432")
+            dbname = os.getenv("DB_NAME", "postgres")
+            self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+            
+        try:
+            # Supabase/PostgreSQL usually requires SSL for external connections
+            if self.url and ("supabase" in self.url or "render" in self.url):
+                self.engine = create_engine(self.url, pool_pre_ping=True)
+            elif self.url:
+                self.engine = create_engine(self.url)
+            else:
                 self.engine = None
+        except Exception as e:
+            print(f"Error initializing database: {e}")
+            self.engine = None
             
         if self.engine:
             try:
@@ -33,21 +39,45 @@ class DatabaseModule:
                 print(f"Error creating sessionmaker: {e}")
 
     def _initialize_tables(self):
-        """Creates the necessary tables if they don't exist."""
-        # Simple table creation for obdscheduling_details
-        create_table_query = """
-        CREATE TABLE IF NOT EXISTS obdscheduling_details (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            obd_name VARCHAR(255) NOT NULL,
-            flow_name VARCHAR(255) NOT NULL,
-            msc_ip VARCHAR(50) NOT NULL,
-            cli VARCHAR(50) NOT NULL,
-            scheduled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
+        """Creates the necessary tables if they don't exist (PostgreSQL syntax)."""
+        # PostgreSQL uses SERIAL for auto-increment and different table creation checks
+        queries = [
+            """
+            CREATE TABLE IF NOT EXISTS obdscheduling_details (
+                id SERIAL PRIMARY KEY,
+                obd_name VARCHAR(255) NOT NULL,
+                flow_name VARCHAR(255) NOT NULL,
+                msc_ip VARCHAR(50) NOT NULL,
+                cli VARCHAR(50) NOT NULL,
+                scheduled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS dnd_list (
+                msisdn VARCHAR(20) PRIMARY KEY
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id SERIAL PRIMARY KEY,
+                msisdn VARCHAR(20) NOT NULL,
+                service_id VARCHAR(50) NOT NULL,
+                status VARCHAR(20) DEFAULT 'ACTIVE',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS unsubscriptions (
+                id SERIAL PRIMARY KEY,
+                msisdn VARCHAR(20) NOT NULL,
+                unsubscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        ]
         try:
             with self.engine.connect() as connection:
-                connection.execute(text(create_table_query))
+                for query in queries:
+                    connection.execute(text(query))
                 connection.commit()
         except Exception as e:
             print(f"Table Initialization Error: {e}")
@@ -68,15 +98,15 @@ class DatabaseModule:
             return False
 
     def execute_query(self, query, params=None):
-        """Executes a raw SQL select query."""
+        """Executes a raw SQL select query and handles result mapping."""
         if not self.engine:
             return []
         
         try:
             with self.engine.connect() as connection:
-                # If query is a string, wrap it in text()
                 statement = text(query) if isinstance(query, str) else query
                 result = connection.execute(statement, params or {})
+                # Using .mappings() for robust dict conversion across SQL flavors
                 return [dict(row) for row in result.mappings()]
         except Exception as e:
             print(f"Query Error: {e}")
