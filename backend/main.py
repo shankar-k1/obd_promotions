@@ -123,17 +123,24 @@ async def generate_content(request: ProcessRequest):
 @app.get("/db-stats")
 async def get_db_stats():
     """Returns counts for DnD list, subscriptions, and unsubscriptions."""
+    if not db.engine:
+        return {"dnd_count": "DB_NOT_INIT", "sub_count": "DB_NOT_INIT", "unsub_count": "DB_NOT_INIT"}
+        
     try:
-        dnd_res = db.execute_query("SELECT COUNT(*) AS cnt FROM dnd_list")
-        sub_res = db.execute_query("SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'ACTIVE'")
-        unsub_res = db.execute_query("SELECT COUNT(*) AS cnt FROM unsubscriptions")
-        return {
-            "dnd_count": dnd_res[0]['cnt'] if dnd_res else 0,
-            "sub_count": sub_res[0]['cnt'] if sub_res else 0,
-            "unsub_count": unsub_res[0]['cnt'] if unsub_res else 0,
-        }
+        # Check connection explicitly
+        with db.engine.connect() as conn:
+            dnd_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM dnd_list")).mappings().first()
+            sub_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'ACTIVE'")).mappings().first()
+            unsub_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM unsubscriptions")).mappings().first()
+            
+            return {
+                "dnd_count": dnd_res['cnt'] if dnd_res else 0,
+                "sub_count": sub_res['cnt'] if sub_res else 0,
+                "unsub_count": unsub_res['cnt'] if unsub_res else 0,
+            }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"DB Stats Error: {e}")
+        return {"dnd_count": f"ERR: {str(e)[:20]}...", "sub_count": "ERR", "unsub_count": "ERR"}
 
 @app.post("/schedule-promotion")
 async def schedule_promotion(request: ScheduleRequest):
