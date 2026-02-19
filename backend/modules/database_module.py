@@ -9,15 +9,16 @@ class DatabaseModule:
     def __init__(self):
         self.db_type = os.getenv("DB_TYPE", "postgresql") 
         # Consolidate URL and Handle Fallbacks
-        url = os.getenv("DATABASE_URL")
-        if not url:
+        self.url = os.getenv("DATABASE_URL")
+        if not self.url:
             user = os.getenv("DB_USER", "postgres")
             password = os.getenv("DB_PASS", "")
             host = os.getenv("DB_HOST", "localhost")
             port = os.getenv("DB_PORT", "5432")
             dbname = os.getenv("DB_NAME", "postgres")
-            url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
-            self.url = url
+            self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        
+        url = self.url
             
         try:
             # Handle PostgreSQL Connectors (Supabase/Render/Postgres)
