@@ -7,34 +7,35 @@ load_dotenv()
 
 class DatabaseModule:
     def __init__(self):
-        self.db_type = os.getenv("DB_TYPE", "postgresql") # Default to postgresql for Supabase
-        self.url = os.getenv("DATABASE_URL")
-        
-        if not self.url:
-            # Fallback to component-based URL if DATABASE_URL is not provided
+        self.db_type = os.getenv("DB_TYPE", "postgresql") 
+        # Consolidate URL and Handle Fallbacks
+        url = os.getenv("DATABASE_URL")
+        if not url:
             user = os.getenv("DB_USER", "postgres")
             password = os.getenv("DB_PASS", "")
             host = os.getenv("DB_HOST", "localhost")
             port = os.getenv("DB_PORT", "5432")
             dbname = os.getenv("DB_NAME", "postgres")
-            self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+            url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+            self.url = url
             
         try:
-            # Supabase/PostgreSQL require SSL for external connections
-            if self.url and ("supabase" in self.url or "render" in self.url or "postgres" in self.url):
-                # Ensure sslmode=require is in the query params if it's a string
-                if "?" not in self.url:
-                    self.url += "?sslmode=require"
-                elif "sslmode" not in self.url:
-                    self.url += "&sslmode=require"
+            # Handle PostgreSQL Connectors (Supabase/Render/Postgres)
+            if url and ("postgresql" in url or "postgres" in url):
+                # Ensure sslmode=require if it's a cloud service
+                if "supabase" in url or "render" in url:
+                    if "?" not in url:
+                        url += "?sslmode=require"
+                    elif "sslmode" not in url:
+                        url += "&sslmode=require"
                 
                 self.engine = create_engine(
-                    self.url, 
+                    url, 
                     pool_pre_ping=True,
-                    connect_args={"sslmode": "require"} if "postgresql" in self.url else {}
+                    connect_args={"sslmode": "require"} if "sslmode=require" in url else {}
                 )
-            elif self.url:
-                self.engine = create_engine(self.url)
+            elif url:
+                self.engine = create_engine(url)
             else:
                 self.engine = None
         except Exception as e:

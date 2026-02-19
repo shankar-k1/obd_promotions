@@ -1,4 +1,5 @@
 import pandas as pd
+from sqlalchemy import text, bindparam
 from .database_module import DatabaseModule
 
 class ScrubbingEngine:
@@ -30,13 +31,14 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        # Normalize for lookup
-        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
-        norm_msisdns = list(norm_map.keys())
+        # 1. Normalize input for lookup
+        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
         
-        dnd_matches = set(self.db.check_dnd_bulk(norm_msisdns))
+        # 2. Get matches and normalize THEM too
+        raw_matches = self.db.check_dnd_bulk(norm_msisdns)
+        dnd_matches = {self.normalize_msisdn(m) for m in raw_matches}
         
-        # Filter: keep original if its normalized form is NOT in matches
+        # 3. Filter: keep original if its normalized form is NOT in matches
         cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in dnd_matches]
         return cleaned, initial_count - len(cleaned)
 
@@ -56,11 +58,12 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
-        norm_msisdns = list(norm_map.keys())
+        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
         
-        subscribed = set(self.db.check_subscriptions_bulk(norm_msisdns, service_id))
-        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in subscribed]
+        raw_matches = self.db.check_subscriptions_bulk(norm_msisdns, service_id)
+        subscribed_matches = {self.normalize_msisdn(m) for m in raw_matches}
+        
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in subscribed_matches]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_unsubscribed(self, msisdns):
@@ -69,10 +72,8 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
-        norm_msisdns = list(norm_map.keys())
+        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
         
-        from sqlalchemy import text, bindparam
         query = text("SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns").bindparams(
             bindparam("msisdns", expanding=True)
         )
