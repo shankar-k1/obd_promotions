@@ -74,8 +74,15 @@ class EmailModule:
         msg.attach(MIMEText(body, 'plain'))
 
         try:
-            with smtplib.SMTP(smtp_host, int(smtp_port), timeout=15) as server:
-                server.starttls()
+            # Use smtplib.SMTP_SSL for port 465, standard SMTP for others
+            if str(smtp_port) == "465":
+                server_class = smtplib.SMTP_SSL
+            else:
+                server_class = smtplib.SMTP
+                
+            with server_class(smtp_host, int(smtp_port), timeout=30) as server:
+                if str(smtp_port) != "465":
+                    server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.send_message(msg)
             return True, "Success"
