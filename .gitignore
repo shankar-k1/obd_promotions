@@ -1,0 +1,25 @@
+# Node
+node_modules/
+.next/
+dist/
+build/
+.env*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# MacOS
+.DS_Store
+
+# Logs
+logs/
+*.log
