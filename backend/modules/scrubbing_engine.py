@@ -12,17 +12,32 @@ class ScrubbingEngine:
         }
         self.subscription_data = {} # MSISDN: Status
 
+    def normalize_msisdn(self, msisdn):
+        """Standardizes MSISDN by removing common prefixes for consistent matching."""
+        if not msisdn: return ""
+        m = str(msisdn).strip().replace(" ", "").replace("-", "").replace("+", "")
+        # Strip Nigerian country code if present
+        if m.startswith("234") and len(m) > 10:
+            m = m[3:]
+        # Strip leading zero
+        if m.startswith("0") and len(m) > 9:
+            m = m[1:]
+        return m
+
     def scrub_dnd(self, msisdns):
         """Removes numbers present in the DND list (via Optimized Batch SQL)."""
         if not msisdns:
             return [], 0
             
         initial_count = len(msisdns)
-        # 1. Get all matches from DB in one go
-        dnd_matches = set(self.db.check_dnd_bulk(msisdns))
+        # Normalize for lookup
+        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
+        norm_msisdns = list(norm_map.keys())
         
-        # 2. Filter the original list
-        cleaned = [m for m in msisdns if m not in dnd_matches]
+        dnd_matches = set(self.db.check_dnd_bulk(norm_msisdns))
+        
+        # Filter: keep original if its normalized form is NOT in matches
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in dnd_matches]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_by_operator(self, msisdns, operator_name):
@@ -41,16 +56,30 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        subscribed = set(self.db.check_subscriptions_bulk(msisdns, service_id))
-        cleaned = [m for m in msisdns if m not in subscribed]
+        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
+        norm_msisdns = list(norm_map.keys())
+        
+        subscribed = set(self.db.check_subscriptions_bulk(norm_msisdns, service_id))
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in subscribed]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_unsubscribed(self, msisdns):
-        """Filters out MSISDNs who have unsubscribed recently (Mocked SQL)."""
+        """Filters out MSISDNs who have unsubscribed recently."""
+        if not msisdns:
+            return [], 0
+            
         initial_count = len(msisdns)
-        # Mocking unsubscription logic hit to DB
-        # query = "SELECT msisdn FROM unsubscriptions WHERE ..."
-        cleaned = msisdns 
+        norm_map = {self.normalize_msisdn(m): m for m in msisdns}
+        norm_msisdns = list(norm_map.keys())
+        
+        from sqlalchemy import text, bindparam
+        query = text("SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns").bindparams(
+            bindparam("msisdns", expanding=True)
+        )
+        unsub_res = self.db.execute_query(query, {"msisdns": norm_msisdns})
+        unsub_matches = {self.normalize_msisdn(row['msisdn']) for row in unsub_res}
+        
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in unsub_matches]
         return cleaned, initial_count - len(cleaned)
 
     def perform_full_scrub(self, msisdns, target_operator=None, options=None):
