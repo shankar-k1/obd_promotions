@@ -31,13 +31,6 @@ class DatabaseModule:
                 if "://" in url and not url.startswith("postgresql+psycopg2"):
                     url = url.replace("://", "+psycopg2://", 1)
                 
-                # Handle Supabase/Transaction Pooler prepared statement issues
-                if ":6543" in url:
-                    if "?" not in url:
-                        url += "?prepare_threshold=0"
-                    elif "prepare_threshold" not in url:
-                        url += "&prepare_threshold=0"
-                
                 # Ensure sslmode=require for cloud services
                 if "supabase" in url or "render" in url:
                     if "sslmode" not in url:
