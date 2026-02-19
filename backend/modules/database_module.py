@@ -20,15 +20,25 @@ class DatabaseModule:
             self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
             
         try:
-            # Supabase/PostgreSQL usually requires SSL for external connections
-            if self.url and ("supabase" in self.url or "render" in self.url):
-                self.engine = create_engine(self.url, pool_pre_ping=True)
+            # Supabase/PostgreSQL require SSL for external connections
+            if self.url and ("supabase" in self.url or "render" in self.url or "postgres" in self.url):
+                # Ensure sslmode=require is in the query params if it's a string
+                if "?" not in self.url:
+                    self.url += "?sslmode=require"
+                elif "sslmode" not in self.url:
+                    self.url += "&sslmode=require"
+                
+                self.engine = create_engine(
+                    self.url, 
+                    pool_pre_ping=True,
+                    connect_args={"sslmode": "require"} if "postgresql" in self.url else {}
+                )
             elif self.url:
                 self.engine = create_engine(self.url)
             else:
                 self.engine = None
         except Exception as e:
-            print(f"Error initializing database: {e}")
+            print(f"❌ DATABASE INITIALIZATION ERROR: {e}")
             self.engine = None
             
         if self.engine:
