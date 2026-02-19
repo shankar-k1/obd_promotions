@@ -93,7 +93,7 @@ export default function Dashboard() {
       .then(data => setDbStats(data))
       .catch((err) => {
         console.error("Failed to fetch DB stats:", err);
-        setDbStats({ dnd_count: 'ERR', sub_count: 'ERR', unsub_count: 'ERR' });
+        setDbStats({ dnd_count: `ERR (${API_BASE})`, sub_count: 'ERR', unsub_count: 'ERR' });
       });
   }, []);
 
