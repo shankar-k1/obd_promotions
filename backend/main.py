@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from sqlalchemy import text
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from modules.email_module import EmailModule
@@ -23,10 +24,15 @@ app.add_middleware(
 
 @app.get("/")
 async def root_diagnostic():
+    db_url = os.getenv("DATABASE_URL")
+    # Mask URL for safety but show if it's there
+    masked_url = f"{db_url[:15]}...{db_url[-5:]}" if db_url else "MISSING"
     return {
         "message": "Outsmart OBD API is Live (FastAPI)",
-        "db_configured": os.getenv("DATABASE_URL") is not None,
-        "db_type": os.getenv("DB_TYPE", "postgresql")
+        "db_configured": db_url is not None,
+        "db_url_status": masked_url,
+        "db_type": os.getenv("DB_TYPE", "postgresql"),
+        "host": os.getenv("RENDER_HOSTNAME", "localhost")
     }
 
 email_module = EmailModule()
