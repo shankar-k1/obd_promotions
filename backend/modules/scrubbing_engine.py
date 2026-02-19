@@ -67,18 +67,15 @@ class ScrubbingEngine:
         return cleaned, initial_count - len(cleaned)
 
     def scrub_unsubscribed(self, msisdns):
-        """Filters out MSISDNs who have unsubscribed recently."""
+        """Filters out MSISDNs who have unsubscribed recently (Multi-Format)."""
         if not msisdns:
             return [], 0
             
         initial_count = len(msisdns)
         norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
         
-        query = text("SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns").bindparams(
-            bindparam("msisdns", expanding=True)
-        )
-        unsub_res = self.db.execute_query(query, {"msisdns": norm_msisdns})
-        unsub_matches = {self.normalize_msisdn(row['msisdn']) for row in unsub_res}
+        raw_matches = self.db.check_unsubscriptions_bulk(norm_msisdns)
+        unsub_matches = {self.normalize_msisdn(m) for m in raw_matches}
         
         cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in unsub_matches]
         return cleaned, initial_count - len(cleaned)

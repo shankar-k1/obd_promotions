@@ -150,38 +150,51 @@ class DatabaseModule:
             print(f"Query Error: {e}")
             return []
 
+    def _expand_msisdns(self, msisdns):
+        """Expands a list of bare MSISDNs into multiple common formats for robust lookup."""
+        expanded = set()
+        for m in msisdns:
+            if not m: continue
+            # Add Bare (no prefix)
+            expanded.add(m)
+            # Add 0-prefixed (Local)
+            expanded.add(f"0{m}")
+            # Add 234-prefixed (International)
+            expanded.add(f"234{m}")
+        return list(expanded)
+
     def check_dnd_bulk(self, msisdns):
-        """Checks which MSISDNs are in the DND list in a single batch query."""
+        """Checks which MSISDNs are in the DND list using multi-format expansion."""
         if not msisdns:
             return []
         
-        # Batching for massive lists (SQL 'IN' clause limit is usually large but we should be careful)
-        # SQLAlchemy 2.0: use bindparam with expanding=True for 'IN' clauses
+        expanded_msisdns = self._expand_msisdns(msisdns)
         query = text("SELECT msisdn FROM dnd_list WHERE msisdn IN :msisdns").bindparams(
             bindparam("msisdns", expanding=True)
         )
-        # We pass msisdns as a list - SQLAlchemy handles the expansion
-        res = self.execute_query(query, {"msisdns": list(msisdns)})
+        res = self.execute_query(query, {"msisdns": expanded_msisdns})
         return [row['msisdn'] for row in res]
 
-    def check_dnd(self, msisdn):
-        """Checks if a single MSISDN is in the DND table."""
-        query = "SELECT msisdn FROM dnd_list WHERE msisdn = :msisdn"
-        res = self.execute_query(query, {"msisdn": msisdn})
-        return len(res) > 0
-
-    def check_subscription(self, msisdn, service_id):
-        """Checks if a single MSISDN is subscribed to a service."""
-        query = "SELECT msisdn FROM subscriptions WHERE msisdn = :msisdn AND service_id = :service_id AND status = 'ACTIVE'"
-        res = self.execute_query(query, {"msisdn": msisdn, "service_id": service_id})
-        return len(res) > 0
-
     def check_subscriptions_bulk(self, msisdns, service_id="PROMO"):
-        """Checks which MSISDNs are subscribed in a single batch query."""
+        """Checks which MSISDNs are subscribed using multi-format expansion."""
         if not msisdns:
             return []
+        
+        expanded_msisdns = self._expand_msisdns(msisdns)
         query = text("SELECT msisdn FROM subscriptions WHERE service_id = :service_id AND status = 'ACTIVE' AND msisdn IN :msisdns").bindparams(
             bindparam("msisdns", expanding=True)
         )
-        res = self.execute_query(query, {"msisdns": list(msisdns), "service_id": service_id})
+        res = self.execute_query(query, {"msisdns": expanded_msisdns, "service_id": service_id})
+        return [row['msisdn'] for row in res]
+
+    def check_unsubscriptions_bulk(self, msisdns):
+        """Checks which MSISDNs are in the unsubscriptions table using multi-format expansion."""
+        if not msisdns:
+            return []
+        
+        expanded_msisdns = self._expand_msisdns(msisdns)
+        query = text("SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns").bindparams(
+            bindparam("msisdns", expanding=True)
+        )
+        res = self.execute_query(query, {"msisdns": expanded_msisdns})
         return [row['msisdn'] for row in res]
