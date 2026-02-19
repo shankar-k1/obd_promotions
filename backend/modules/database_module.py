@@ -10,9 +10,18 @@ class DatabaseModule:
         self.db_type = os.getenv("DB_TYPE", "postgresql") 
         # Consolidate URL and Handle Fallbacks
         self.url = os.getenv("DATABASE_URL")
-        if self.url and self.url.startswith("postgres://"):
-            self.url = self.url.replace("postgres://", "postgresql://", 1)
+        if self.url:
+            if self.url.startswith("postgres://"):
+                self.url = self.url.replace("postgres://", "postgresql://", 1)
             
+            # Robust fix: Strip unsupported 'prepare_threshold' if it exists in the env var
+            if "prepare_threshold" in self.url:
+                import re
+                self.url = re.sub(r'[&?]prepare_threshold=[^&]+', '', self.url)
+                # Cleanup if ? was the only thing left
+                if self.url.endswith('?'):
+                    self.url = self.url[:-1]
+        
         if not self.url:
             user = os.getenv("DB_USER", "postgres")
             password = os.getenv("DB_PASS", "")
