@@ -561,7 +561,8 @@ export default function Dashboard() {
                       alert('Broadcast Scheduled Successfully! 🚀');
                       setIsScheduleModalOpen(false);
                     } else {
-                      alert('Failed to schedule. Check server logs.');
+                      const errData = await res.json();
+                      alert(`Failed to schedule: ${errData.detail || 'Unknown error'}`);
                     }
                   } catch (err) {
                     alert('Network Error.');
