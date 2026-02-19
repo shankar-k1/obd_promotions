@@ -54,7 +54,9 @@ class DatabaseModule:
             """,
             """
             CREATE TABLE IF NOT EXISTS dnd_list (
-                msisdn VARCHAR(20) PRIMARY KEY
+                id SERIAL PRIMARY KEY,
+                msisdn VARCHAR(20) UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
             """
@@ -70,6 +72,7 @@ class DatabaseModule:
             CREATE TABLE IF NOT EXISTS unsubscriptions (
                 id SERIAL PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
+                service_id VARCHAR(50) DEFAULT 'PROMO',
                 unsubscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
