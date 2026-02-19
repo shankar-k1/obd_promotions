@@ -138,11 +138,16 @@ async def schedule_promotion(request: ScheduleRequest):
 
 @app.get("/health-check")
 async def health_check():
-    """Monitors the current promotion health."""
-    # Mocking real-time stats
+    """Monitors the current promotion health and database connectivity."""
+    db_status = "Connected" if db.engine and db.engine.connect() else "Disconnected"
     mock_stats = {"success_rate": 0.45, "unsub_rate": 0.01}
     alerts = alerting_system.check_promotion_health(mock_stats)
-    return {"status": "Monitoring", "alerts": alerts}
+    return {
+        "status": "Monitoring", 
+        "database": db_status,
+        "database_type": os.getenv("DB_TYPE", "unknown"),
+        "alerts": alerts
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -58,9 +58,15 @@ def migrate():
             # We use a simple loop. For massive lists, we might want chunking.
             with pg_engine.connect() as conn:
                 # First, ensure table exists in PG (Schema Initialization)
-                # (This is a safety net in case Render hasn't started yet)
                 from modules.database_module import DatabaseModule
-                db = DatabaseModule() # This triggers _initialize_tables
+                db = DatabaseModule() 
+                
+                # Force drop and recreate for clean migration
+                print(f"  🧹 Cleaning remote {table} for fresh migration...")
+                conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+                conn.commit()
+                
+                db._initialize_tables()
                 print(f"  🛠️  Ensured remote schema is initialized.")
 
                 # Insert data

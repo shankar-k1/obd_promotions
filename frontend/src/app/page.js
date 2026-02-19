@@ -22,9 +22,21 @@ import {
   XCircle,
   Activity
 } from 'lucide-react';
-const API_BASE = typeof window !== 'undefined' && window.location.hostname === 'localhost'
-  ? 'http://localhost:8000'
-  : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const getApiBase = () => {
+  if (typeof window === 'undefined') return 'http://localhost:8000';
+  if (window.location.hostname === 'localhost') return 'http://localhost:8000';
+
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!envUrl) return 'http://localhost:8000';
+
+  // If it's a protocol-less host from Render (e.g. obd-backend.onrender.com)
+  if (!envUrl.startsWith('http')) {
+    return `https://${envUrl}`;
+  }
+  return envUrl;
+};
+
+const API_BASE = getApiBase();
 
 export default function Dashboard() {
   const [counts, setCounts] = useState({ total: 0, scrubbed: 0, final: 0 });
@@ -74,9 +86,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetch(`${API_BASE}/db-stats`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
       .then(data => setDbStats(data))
-      .catch(() => setDbStats({ dnd_count: 'N/A', sub_count: 'N/A', unsub_count: 'N/A' }));
+      .catch((err) => {
+        console.error("Failed to fetch DB stats:", err);
+        setDbStats({ dnd_count: 'N/A', sub_count: 'N/A', unsub_count: 'N/A' });
+      });
   }, []);
 
   const [sessionStats, setSessionStats] = useState({ dnd: 0, sub: 0, unsub: 0, operator: 0 });
