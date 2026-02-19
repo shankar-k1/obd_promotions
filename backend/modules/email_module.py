@@ -10,6 +10,7 @@ class EmailModule:
         self.user = os.getenv("EMAIL_USER")
         self.password = os.getenv("EMAIL_PASS")
         self.host = os.getenv("EMAIL_HOST")
+        self.last_error = None
 
     def fetch_latest_obd_request(self):
         """
@@ -73,14 +74,16 @@ class EmailModule:
         msg.attach(MIMEText(body, 'plain'))
 
         try:
-            with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
+            with smtplib.SMTP(smtp_host, int(smtp_port), timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.send_message(msg)
-            return True
+            return True, "Success"
         except Exception as e:
-            print(f"ERROR: Failed to send email: {e}")
-            return False
+            error_msg = f"SMTP Failure: {str(e)}"
+            self.last_error = error_msg
+            print(error_msg)
+            return False, error_msg
 
     def send_scrub_report(self, report):
         """
@@ -110,7 +113,11 @@ Best regards,
 Outsmart OBD Agent
         """
         
-        return self._send_email(subject, body, self.user)
+        recipient = self.user or os.getenv("SMTP_USER")
+        if not recipient:
+            return False, "No recipient email configured"
+            
+        return self._send_email(subject, body, recipient)
 
     def send_performance_reply(self, original_msg_id, stats):
         """

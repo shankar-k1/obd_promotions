@@ -85,16 +85,40 @@ async def scrub_base(request: ProcessRequest):
         )
         
         # Push results to email
+        email_ok, email_msg = False, "Not attempted"
         try:
-            email_module.send_scrub_report(report)
+            email_ok, email_msg = email_module.send_scrub_report(report)
         except Exception as e:
-            print(f"WARNING: Email report failed to send: {e}")
+            email_msg = f"Email trigger error: {str(e)}"
+            print(f"WARNING: {email_msg}")
 
         print(f"DEBUG: Scrub complete. Final base count: {len(final_base)}")
-        return {"final_base_count": len(final_base), "final_base": final_base, "report": report}
+        return {
+            "final_base_count": len(final_base), 
+            "final_base": final_base, 
+            "report": report,
+            "email_status": "SENT" if email_ok else f"FAILED: {email_msg}"
+        }
     except Exception as e:
         print(f"DEBUG: Scrub error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/verify-email")
+async def verify_email():
+    """Diagnostic endpoint to test SMTP connectivity."""
+    test_report = {
+        "initial_count": 100,
+        "dnd_removed": 10,
+        "sub_removed": 5,
+        "operator_removed": 2,
+        "unsub_removed": 3,
+        "stages": [{"stage": "Final", "count": 80}]
+    }
+    success, message = email_module.send_scrub_report(test_report)
+    if success:
+        return {"status": "success", "message": "Test email sent successfully to " + (email_module.user or "default")}
+    else:
+        raise HTTPException(status_code=500, detail=f"Email Verification Failed: {message}")
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
