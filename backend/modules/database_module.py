@@ -27,7 +27,11 @@ class DatabaseModule:
         try:
             # Handle PostgreSQL Connectors (Supabase/Render/Postgres)
             if url and ("postgresql" in url or "postgres" in url):
-                # Ensure sslmode=require if it's a cloud service
+                # Ensure SQLAlchemy uses the psycopg2 driver explicitly
+                if "://" in url and not url.startswith("postgresql+psycopg2"):
+                    url = url.replace("://", "+psycopg2://", 1)
+                
+                # Ensure sslmode=require for cloud services
                 if "supabase" in url or "render" in url:
                     if "?" not in url:
                         url += "?sslmode=require"
@@ -50,10 +54,14 @@ class DatabaseModule:
             
         if self.engine:
             try:
+                # Test connection immediately
+                with self.engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
                 self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
                 self._initialize_tables()
             except Exception as e:
-                print(f"Error creating sessionmaker: {e}")
+                self.init_error = f"Conn Test Failed: {str(e)}"
+                print(f"Error initializing DB session: {e}")
 
     def _initialize_tables(self):
         """Creates the necessary tables if they don't exist (PostgreSQL syntax)."""
