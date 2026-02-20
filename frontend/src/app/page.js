@@ -156,6 +156,47 @@ export default function Dashboard() {
     }
   };
 
+  const handleLaunchCampaign = async () => {
+    if (!cleanedMsisdns.length) {
+      alert("No verified targets found. Please run the scrubbing pipeline first.");
+      return;
+    }
+
+    const chunkSizeInput = prompt("Enter custom chunk size for campaign launch (e.g., 5000):", "5000");
+    if (chunkSizeInput === null) return; // User cancelled
+
+    const chunkSize = parseInt(chunkSizeInput);
+    if (isNaN(chunkSize) || chunkSize <= 0) {
+      alert("Invalid chunk size. Please enter a positive number.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/launch-campaign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          msisdn_list: cleanedMsisdns,
+          chunk_size: chunkSize
+        }),
+      });
+
+      if (!res.ok) {
+        const errInfo = await res.json();
+        throw new Error(errInfo.detail || `Server returned ${res.status}`);
+      }
+
+      const data = await res.json();
+      alert(`CAMPAIGN LAUNCHED: ${data.message}`);
+    } catch (err) {
+      console.error("Launch failed", err);
+      alert(`Launch Failed: ${err.message || 'Network Error'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleFileUpload = (data) => {
     console.log("Dashboard: Upload Success intercepted", data.total);
     setLoading(true);
@@ -424,7 +465,6 @@ export default function Dashboard() {
           <div className="flex flex-wrap md:flex-nowrap gap-4 mt-10">
             <button
               className="btn-secondary"
-              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', border: '1px solid var(--accent-cyan)', background: 'rgba(34, 211, 238, 0.05)' }}
               onClick={async () => {
                 try {
                   const res = await fetch(`${API_BASE}/verify-email`);
@@ -443,67 +483,70 @@ export default function Dashboard() {
               <Zap size={18} fill="currentColor" />
               {loading ? 'Sychronizing Datasets...' : 'EXECUTE SCRUBBING PIPELINE'}
             </button>
-            <button className="btn-secondary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={downloadCleanedBase} disabled={cleanedMsisdns.length === 0}>
+            <button className="btn-secondary" onClick={downloadCleanedBase} disabled={cleanedMsisdns.length === 0}>
               <Download size={16} />
               EXPORT CSV
             </button>
             <button
-              className="btn-primary"
-              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--bg-glass)', opacity: cleanedMsisdns.length > 0 ? 1 : 0.4 }}
+              className="btn-secondary"
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'inherit', borderColor: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--glass-border)' }}
               onClick={() => setIsScheduleModalOpen(true)}
               disabled={cleanedMsisdns.length === 0}
             >
               <Calendar size={16} />
-              SCHEDULE
+              SCHEDULE & LAUNCH
             </button>
           </div>
         </motion.section>
 
         {/* STEP 5: VERIFIED RESULTS TERMINAL */}
-        <AnimatePresence>
-          {cleanedMsisdns.length > 0 && (
-            <motion.section
-              className="glass-panel sequential-step"
-              initial={{ opacity: 0, height: 0, marginTop: -40 }}
-              animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
-              exit={{ opacity: 0, height: 0 }}
-            >
-              <div className="step-badge"><Layout size={20} /></div>
-              <h2 className="panel-title">
-                <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
-                Step 5: Verified Results Output
-                <span className="text-ghost ml-auto text-[10px]">Real-time Terminal View</span>
-              </h2>
-              <div className="flex justify-between items-center mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Live Session MSISDN Feed</span>
+        < AnimatePresence >
+          {
+            cleanedMsisdns.length > 0 && (
+              <motion.section
+                className="glass-panel sequential-step"
+                initial={{ opacity: 0, height: 0, marginTop: -40 }}
+                animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <div className="step-badge"><Layout size={20} /></div>
+                <h2 className="panel-title">
+                  <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
+                  Step 5: Verified Results Output
+                  <span className="text-ghost ml-auto text-[10px]">Real-time Terminal View</span>
+                </h2>
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Live Session MSISDN Feed</span>
+                  </div>
+                  <button
+                    className="glass-pill text-[10px] font-bold text-emerald-400 hover:bg-emerald-400 hover:text-black transition-all"
+                    onClick={() => {
+                      navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
+                      alert('Copied to clipboard!');
+                    }}
+                  >
+                    <Copy size={12} className="inline mr-2" />
+                    COPY ALL TO CLIPBOARD
+                  </button>
                 </div>
-                <button
-                  className="glass-pill text-[10px] font-bold text-emerald-400 hover:bg-emerald-400 hover:text-black transition-all"
-                  onClick={() => {
-                    navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
-                    alert('Copied to clipboard!');
-                  }}
-                >
-                  <Copy size={12} className="inline mr-2" />
-                  COPY ALL TO CLIPBOARD
-                </button>
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '20px', border: '1px solid var(--glass-border)', padding: '24px', height: '220px', overflowY: 'auto' }}>
-                <pre style={{ fontSize: '0.85rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.6' }}>{cleanedMsisdns.join('\n')}</pre>
-              </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
+                <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '20px', border: '1px solid var(--glass-border)', padding: '24px', height: '220px', overflowY: 'auto' }}>
+                  <pre style={{ fontSize: '0.85rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.6' }}>{cleanedMsisdns.join('\n')}</pre>
+                </div>
+              </motion.section>
+            )
+          }
+        </AnimatePresence >
 
         {/* STEP 6: AI CAMPAIGN STUDIO */}
-        <motion.section
+        < motion.section
           className="glass-panel sequential-step"
           variants={{
             hidden: { opacity: 0, y: 20 },
             visible: { opacity: 1, y: 0 }
-          }}
+          }
+          }
         >
           <div className="step-badge"><Wand2 size={20} /></div>
           <h2 className="panel-title">
@@ -546,10 +589,10 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-        </motion.section>
+        </motion.section >
 
         {/* Performance Overview */}
-        <motion.section
+        < motion.section
           style={{ gridColumn: '1 / -1', marginTop: '60px' }}
           variants={{
             hidden: { opacity: 0 },
@@ -557,70 +600,94 @@ export default function Dashboard() {
           }}
         >
           <PerformanceReport />
-        </motion.section>
-      </motion.div>
+        </motion.section >
+      </motion.div >
 
       {/* MODAL OVERLAY */}
-      {isScheduleModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsScheduleModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">Schedule Campaign</h2>
-              <p className="text-xs text-slate-400 mt-2">Configure execution parameters for your finalized base</p>
-            </div>
+      {
+        isScheduleModalOpen && (
+          <div className="modal-overlay" onClick={() => setIsScheduleModalOpen(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">Schedule Campaign</h2>
+                <p className="text-xs text-slate-400 mt-2">Configure execution parameters for your finalized base</p>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4">
-              <div className="form-group">
-                <label className="form-label">OBD Project Name</label>
-                <input type="text" className="form-input" placeholder="e.g. Summer_2024" value={scheduleData.obd_name} onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value })} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4">
+                <div className="form-group">
+                  <label className="form-label">OBD Project Name</label>
+                  <input type="text" className="form-input" placeholder="e.g. Summer_2024" value={scheduleData.obd_name} onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Voice/Flow Logic</label>
+                  <select className="form-input form-select" value={scheduleData.flow_name} onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}>
+                    <option value="">Select flow...</option>
+                    <option value="Promo Flow 1">Standard Promo</option>
+                    <option value="Holiday Special">Holiday Special</option>
+                    {mermaidFlow && <option value="AI Generated Flow">AI Generated Flow</option>}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">MSC Connection IP</label>
+                  <input type="text" className="form-input" placeholder="0.0.0.0" value={scheduleData.msc_ip} onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">CLI Masking</label>
+                  <input type="text" className="form-input" placeholder="123456" value={scheduleData.cli} onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })} />
+                </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Voice/Flow Logic</label>
-                <select className="form-input form-select" value={scheduleData.flow_name} onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}>
-                  <option value="">Select flow...</option>
-                  <option value="Promo Flow 1">Standard Promo</option>
-                  <option value="Holiday Special">Holiday Special</option>
-                  {mermaidFlow && <option value="AI Generated Flow">AI Generated Flow</option>}
-                </select>
-              </div>
-              <div className="form-group">
-                <label className="form-label">MSC Connection IP</label>
-                <input type="text" className="form-input" placeholder="0.0.0.0" value={scheduleData.msc_ip} onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">CLI Masking</label>
-                <input type="text" className="form-input" placeholder="123456" value={scheduleData.cli} onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })} />
-              </div>
-            </div>
 
-            <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setIsScheduleModalOpen(false)}>Cancel</button>
-              <button className="btn-primary"
-                onClick={async () => {
-                  try {
-                    const res = await fetch(`${API_BASE}/schedule-promotion`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(scheduleData)
-                    });
-                    if (res.ok) {
-                      alert('Broadcast Scheduled Successfully! 🚀');
-                      setIsScheduleModalOpen(false);
-                    } else {
-                      const errData = await res.json();
-                      alert(`Failed to schedule: ${errData.detail || 'Unknown error'}`);
+              <div className="modal-footer">
+                <button className="btn-secondary" onClick={() => setIsScheduleModalOpen(false)}>Cancel</button>
+                <button className="btn-launch"
+                  onClick={async () => {
+                    try {
+                      // 1. Save Scheduling Details FIRST
+                      const schedRes = await fetch(`${API_BASE}/schedule-promotion`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(scheduleData)
+                      });
+
+                      if (!schedRes.ok) {
+                        const err = await schedRes.json();
+                        alert(`Scheduling Failed: ${err.detail}`);
+                        return;
+                      }
+
+                      // 2. Alert Success for Entry creation
+                      alert("Entry create successfully");
+
+                      // 3. Trigger Launch
+                      const launchRes = await fetch(`${API_BASE}/launch-campaign`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          msisdn_list: cleanedMsisdns,
+                          project_name: scheduleData.obd_name
+                        })
+                      });
+
+                      if (launchRes.ok) {
+                        const data = await launchRes.json();
+                        alert(`CAMPAIGN LIVE! 🚀\n${data.message}`);
+                        setIsScheduleModalOpen(false);
+                      } else {
+                        const err = await launchRes.json();
+                        alert(`Launch Failed: ${err.detail}`);
+                      }
+                    } catch (err) {
+                      alert(`Network Error: ${err.message}`);
                     }
-                  } catch (err) {
-                    alert('Network Error.');
-                  }
-                }}
-              >
-                Launch Campaign
-              </button>
+                  }}
+                >
+                  Confirm & Launch Campaign
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 }
