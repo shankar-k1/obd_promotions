@@ -43,13 +43,17 @@ class ScrubbingEngine:
         return cleaned, initial_count - len(cleaned)
 
     def scrub_by_operator(self, msisdns, operator_name):
-        """Filters numbers that belong to a specific operator series."""
+        """Filters numbers that belong to a specific operator series (Prefix-Robust)."""
         if operator_name not in self.operator_series:
             return msisdns, 0
         
-        allowed_prefixes = self.operator_series[operator_name]
+        # Operators prefixes are usually defined with '0' (0803, etc)
+        # We strip the '0' for universal matching against normalized numbers
+        allowed_prefixes = [p[1:] if p.startswith("0") else p for p in self.operator_series[operator_name]]
         initial_count = len(msisdns)
-        cleaned = [m for m in msisdns if any(m.startswith(p) for p in allowed_prefixes)]
+        
+        # Filter: normalize the msisdn first to remove '234' or '0' prefixes, then check startswith
+        cleaned = [m for m in msisdns if any(self.normalize_msisdn(m).startswith(p) for p in allowed_prefixes)]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_subscriptions(self, msisdns, service_id="PROMO"):
@@ -82,9 +86,12 @@ class ScrubbingEngine:
 
     def perform_full_scrub(self, msisdns, target_operator=None, options=None):
         """
-        Executes the full scrubbing pipeline based on toggled options.
+        Executes the full scrubbing pipeline with detailed stage logging.
         """
         options = options or {"dnd": True, "sub": True, "unsub": True, "operator": True}
+        print(f"DEBUG: Starting Full Scrub. Initial Count: {len(msisdns)}")
+        print(f"DEBUG: Options: {options} | Target Operator: {target_operator}")
+        
         # 1. Initial State
         report = {
             "initial_count": len(msisdns),
@@ -103,23 +110,28 @@ class ScrubbingEngine:
             current_base, removed = self.scrub_dnd(current_base)
             report["dnd_removed"] = removed
             report["stages"].append({"stage": "After DND", "count": len(current_base), "removed": removed})
+            print(f"DEBUG: Stage [DND] complete. Count: {len(current_base)} (Removed: {removed})")
         
         # 3. Operator Scrubbing
         if options.get("operator") and target_operator:
             current_base, removed = self.scrub_by_operator(current_base, target_operator)
             report["operator_removed"] = removed
             report["stages"].append({"stage": f"After {target_operator} Scrubbing", "count": len(current_base), "removed": removed})
+            print(f"DEBUG: Stage [Operator: {target_operator}] complete. Count: {len(current_base)} (Removed: {removed})")
             
         # 4. Subscription Scrubbing
         if options.get("sub"):
             current_base, removed = self.scrub_subscriptions(current_base)
             report["sub_removed"] = removed
             report["stages"].append({"stage": "After Subscription Check", "count": len(current_base), "removed": removed})
-
+            print(f"DEBUG: Stage [Subscriptions] complete. Count: {len(current_base)} (Removed: {removed})")
+ 
         # 5. Unsubscription Scrubbing
         if options.get("unsub"):
             current_base, removed = self.scrub_unsubscribed(current_base)
             report["unsub_removed"] = removed
             report["stages"].append({"stage": "Final (After Unsub Check)", "count": len(current_base), "removed": removed})
+            print(f"DEBUG: Stage [Unsubscriptions] complete. Count: {len(current_base)} (Removed: {removed})")
         
+        print(f"DEBUG: Full Scrub Pipeline Complete. Final Count: {len(current_base)}")
         return current_base, report
