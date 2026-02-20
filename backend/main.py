@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy import text
 from pydantic import BaseModel
 from typing import List, Optional, Dict
@@ -22,8 +22,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize Modules
+email_module = EmailModule()
+scrubbing_engine = ScrubbingEngine()
+alerting_system = AlertingSystem()
+upload_handler = UploadHandler()
+prompt_agent = OBDPromptAgent()
+db = DatabaseModule()
+
 @app.get("/")
-async def root_diagnostic():
+async def root():
     db_url = os.getenv("DATABASE_URL")
     # Mask URL for safety but show if it's there
     masked_url = f"{db_url[:15]}...{db_url[-5:]}" if db_url else "MISSING"
@@ -31,17 +39,10 @@ async def root_diagnostic():
         "message": "Outsmart OBD API is Live (FastAPI)",
         "db_configured": db_url is not None,
         "db_url_status": masked_url,
-        "db_init_status": "OK" if not db.init_error else f"FAIL: {db.init_error}",
+        "db_init_status": "OK" if not getattr(db, 'init_error', "") else f"FAIL: {db.init_error}",
         "db_type": os.getenv("DB_TYPE", "postgresql"),
         "host": os.getenv("RENDER_HOSTNAME", "localhost")
     }
-
-email_module = EmailModule()
-scrubbing_engine = ScrubbingEngine()
-alerting_system = AlertingSystem()
-upload_handler = UploadHandler()
-prompt_agent = OBDPromptAgent()
-db = DatabaseModule()
 
 class FlowRequest(BaseModel):
     email_context: str
@@ -58,9 +59,6 @@ class ProcessRequest(BaseModel):
     email_context: Optional[str] = None
     options: Optional[Dict[str, bool]] = None
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to Outsmart OBD Agent API"}
 
 @app.get("/fetch-request")
 async def fetch_request():
@@ -75,7 +73,7 @@ async def fetch_request():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/scrub")
-async def scrub_base(request: ProcessRequest):
+async def scrub_base(request: ProcessRequest, background_tasks: BackgroundTasks):
     """Performs scrubbing on the provided MSISDN list with specific options."""
     try:
         final_base, report = scrubbing_engine.perform_full_scrub(
@@ -84,23 +82,65 @@ async def scrub_base(request: ProcessRequest):
             request.options
         )
         
-        # Push results to email
-        email_ok, email_msg = False, "Not attempted"
-        try:
-            email_ok, email_msg = email_module.send_scrub_report(report)
-        except Exception as e:
-            email_msg = f"Email trigger error: {str(e)}"
-            print(f"WARNING: {email_msg}")
+        # Consolidate background tasks for better logging/monitoring
+        if final_base:
+            background_tasks.add_task(post_scrub_processing, final_base, report)
 
-        print(f"DEBUG: Scrub complete. Final base count: {len(final_base)}")
+        print(f"DEBUG: Scrub complete. Final count: {len(final_base)}. Post-processing queued.")
         return {
             "final_base_count": len(final_base), 
             "final_base": final_base, 
             "report": report,
-            "email_status": "SENT" if email_ok else f"FAILED: {email_msg}"
+            "tasks_status": "QUEUED"
         }
     except Exception as e:
         print(f"DEBUG: Scrub error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def post_scrub_processing(final_base, report):
+    """Heavy I/O tasks run in background to prevent UI timeouts."""
+    import time
+    start_time = time.time()
+    print("--- STARTING POST-SCRUB BACKGROUND PROCESSING ---")
+    
+    # 1. Email Report FIRST (User gets results quickly)
+    try:
+        print(f"DEBUG: Sending scrubbing report via email...")
+        email_ok, email_msg = email_module.send_scrub_report(report, msisdns=final_base)
+        print(f"DEBUG: Email Status: {'SENT' if email_ok else 'FAILED: ' + email_msg}")
+    except Exception as e:
+        print(f"ERROR: Background email failed: {e}")
+
+    # 2. Save to Database SECOND (Can take long for 100k+ rows)
+    try:
+        print(f"DEBUG: Saving {len(final_base)} targets to database...")
+        db_start = time.time()
+        save_ok, table_name = db.save_verified_scrub_results(final_base)
+        duration = time.time() - db_start
+        print(f"DEBUG: DB Save Status: {'SUCCESS (' + table_name + ')' if save_ok else 'FAILED'} (Took {duration:.2f}s)")
+    except Exception as e:
+        print(f"ERROR: Background DB save failed: {e}")
+        
+    print(f"--- COMPLETED POST-SCRUB BACKGROUND PROCESSING (Total: {time.time() - start_time:.2f}s) ---")
+
+class LaunchRequest(BaseModel):
+    msisdn_list: List[str]
+    project_name: str = "default"
+
+@app.post("/launch-campaign")
+async def launch_campaign(request: LaunchRequest):
+    """Saves verified MSISDNs into a single project table."""
+    try:
+        success, message = db.save_campaign_targets_project(
+            request.msisdn_list, 
+            request.project_name
+        )
+        if success:
+            return {"status": "success", "message": message}
+        else:
+            raise HTTPException(status_code=500, detail=message)
+    except Exception as e:
+        print(f"DEBUG: Launch error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/verify-email")

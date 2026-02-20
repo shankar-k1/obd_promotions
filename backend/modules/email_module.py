@@ -7,6 +7,7 @@ load_dotenv()
 
 class EmailModule:
     def __init__(self):
+        load_dotenv()
         self.user = os.getenv("EMAIL_USER")
         self.password = os.getenv("EMAIL_PASS")
         self.host = os.getenv("EMAIL_HOST")
@@ -55,23 +56,40 @@ class EmailModule:
         
         return details
 
-    def _send_email(self, subject, body, to_email):
-        """Helper method to send an email via SMTP."""
+    def _send_email(self, subject, body, to_email, attachment=None):
+        """Helper method to send an email via SMTP with optional attachment."""
         import smtplib
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
+        from email.mime.base import MIMEBase
+        from email import encoders
 
         smtp_user = os.getenv("SMTP_USER")
         smtp_pass = os.getenv("SMTP_PASS")
         smtp_host = os.getenv("SMTP_HOST")
         smtp_port = os.getenv("SMTP_PORT", "587")
+        sender_email = os.getenv("SENDER_EMAIL", smtp_user)
 
         msg = MIMEMultipart()
-        msg['From'] = f"Outsmart OBD Agent <{smtp_user}>"
+        msg['From'] = f"Outsmart OBD Agent <{sender_email}>"
         msg['To'] = to_email
         msg['Subject'] = subject
+        msg['Reply-To'] = sender_email
 
         msg.attach(MIMEText(body, 'plain'))
+
+        if attachment:
+            from email.mime.base import MIMEBase
+            
+            filename = attachment.get("filename", "verified_targets.csv")
+            content = attachment.get("content", "")
+            
+            # Encode content to base64 and attach as a document
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(content.encode('utf-8'))
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+            msg.attach(part)
 
         try:
             # Use smtplib.SMTP_SSL for port 465, standard SMTP for others
@@ -92,9 +110,10 @@ class EmailModule:
             print(error_msg)
             return False, error_msg
 
-    def send_scrub_report(self, report):
+    def send_scrub_report(self, report, msisdns=None):
         """
         Sends a comprehensive scrubbing summary to the configured user.
+        Includes a CSV attachment of the verified MSISDNs.
         """
         final_count = report["stages"][-1]["count"] if report.get("stages") else 0
         
@@ -114,17 +133,27 @@ Summary Metrics:
 
 Final Clean Base: {final_count:,}
 
+Attached: Verified Target List (.csv)
+
 Status: Ready for Promotion.
 
 Best regards,
 Outsmart OBD Agent
         """
         
+        attachment = None
+        if msisdns:
+            csv_content = "msisdn\n" + "\n".join([str(m) for m in msisdns])
+            attachment = {
+                "filename": "verified_msisdns.csv",
+                "content": csv_content
+            }
+
         recipient = self.user or os.getenv("SMTP_USER")
         if not recipient:
             return False, "No recipient email configured"
             
-        return self._send_email(subject, body, recipient)
+        return self._send_email(subject, body, recipient, attachment=attachment)
 
     def send_performance_reply(self, original_msg_id, stats):
         """
