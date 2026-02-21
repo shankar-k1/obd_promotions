@@ -17,11 +17,11 @@ class ScrubbingEngine:
         """Standardizes MSISDN by removing common prefixes for consistent matching."""
         if not msisdn: return ""
         m = str(msisdn).strip().replace(" ", "").replace("-", "").replace("+", "")
-        # Strip Nigerian country code if present
-        if m.startswith("234") and len(m) > 10:
+        # Robust stripping of Nigerian country code
+        if m.startswith("234"):
             m = m[3:]
-        # Strip leading zero
-        if m.startswith("0") and len(m) > 9:
+        # Strip leading zero if it exists (very common in local formats)
+        if m.startswith("0"):
             m = m[1:]
         return m
 
@@ -31,15 +31,13 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        # 1. Normalize input for lookup
-        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
+        # Get all relevant matches from DB
+        raw_matches = self.db.check_dnd_bulk(msisdns)
+        # Build bad suffix set (last 8 digits) for robust mapping
+        bad_suffixes = {str(m).strip()[-8:] for m in raw_matches if len(str(m).strip()) >= 8}
         
-        # 2. Get matches and normalize THEM too
-        raw_matches = self.db.check_dnd_bulk(norm_msisdns)
-        dnd_matches = {self.normalize_msisdn(m) for m in raw_matches}
-        
-        # 3. Filter: keep original if its normalized form is NOT in matches
-        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in dnd_matches]
+        # Filter: check if normalized msisdn suffix is in bad set
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m)[-8:] not in bad_suffixes]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_by_operator(self, msisdns, operator_name):
@@ -62,12 +60,10 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
+        raw_matches = self.db.check_subscriptions_bulk(msisdns, service_id)
+        bad_suffixes = {str(m).strip()[-8:] for m in raw_matches if len(str(m).strip()) >= 8}
         
-        raw_matches = self.db.check_subscriptions_bulk(norm_msisdns, service_id)
-        subscribed_matches = {self.normalize_msisdn(m) for m in raw_matches}
-        
-        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in subscribed_matches]
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m)[-8:] not in bad_suffixes]
         return cleaned, initial_count - len(cleaned)
 
     def scrub_unsubscribed(self, msisdns):
@@ -76,12 +72,10 @@ class ScrubbingEngine:
             return [], 0
             
         initial_count = len(msisdns)
-        norm_msisdns = [self.normalize_msisdn(m) for m in msisdns]
+        raw_matches = self.db.check_unsubscriptions_bulk(msisdns)
+        bad_suffixes = {str(m).strip()[-8:] for m in raw_matches if len(str(m).strip()) >= 8}
         
-        raw_matches = self.db.check_unsubscriptions_bulk(norm_msisdns)
-        unsub_matches = {self.normalize_msisdn(m) for m in raw_matches}
-        
-        cleaned = [m for m in msisdns if self.normalize_msisdn(m) not in unsub_matches]
+        cleaned = [m for m in msisdns if self.normalize_msisdn(m)[-8:] not in bad_suffixes]
         return cleaned, initial_count - len(cleaned)
 
     def perform_full_scrub(self, msisdns, target_operator=None, options=None):
