@@ -29,7 +29,9 @@ import {
   Settings,
   X,
   Users,
-  PieChart
+  PieChart,
+  Palette,
+  ChevronDown
 } from 'lucide-react';
 const getApiBase = () => {
   if (typeof window === 'undefined') return 'http://localhost:8000';
@@ -136,6 +138,7 @@ export default function Dashboard() {
     document.documentElement.setAttribute('data-theme', savedTheme);
   }, []);
 
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const themes = ['dark', 'light', 'midnight', 'cyberpunk', 'forest', 'aurora'];
   const toggleTheme = () => {
     const currentIndex = themes.indexOf(theme);
@@ -372,48 +375,236 @@ export default function Dashboard() {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-center min-h-screen" style={{ background: 'var(--bg-main)' }} data-theme="dark">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="glass-panel w-full"
-          style={{ maxWidth: '450px' }}
-        >
-          <div className="flex justify-center mb-6">
-            <div className="p-4 rounded-2xl" style={{ background: 'rgba(255, 255, 255, 0.05)' }}>
-              <Lock strokeWidth={1.5} size={28} style={{ color: 'var(--text-main)' }} />
-            </div>
-          </div>
-          <h1 className="text-xl font-bold text-center tracking-wide mb-8" style={{ color: 'var(--text-main)' }}>Enter Credentials</h1>
+      <div
+        className="flex items-center justify-center relative overflow-hidden"
+        data-theme={theme}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          width: '100vw',
+          height: '100vh',
+          background: 'var(--bg-main)',
+          fontFamily: "'Inter', sans-serif",
+          overflow: 'auto',
+          zIndex: 9999
+        }}
+      >
+        {/* Environmental Glows - Theme Aware */}
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.1] blur-[120px]" style={{ background: 'var(--accent-cyan)' }} />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full opacity-[0.05] blur-[100px]" style={{ background: 'var(--accent-purple)' }} />
 
-          <form onSubmit={handleLogin} className="flex flex-col gap-4">
-            <div>
-              <input
-                type="text"
-                className="input-field"
-                placeholder="Username"
-                value={loginCreds.username}
-                onChange={(e) => setLoginCreds({ ...loginCreds, username: e.target.value })}
-                required
-              />
-            </div>
-            <div>
-              <input
-                type="password"
-                className="input-field"
-                placeholder="Password"
-                value={loginCreds.password}
-                onChange={(e) => setLoginCreds({ ...loginCreds, password: e.target.value })}
-                required
-              />
-            </div>
-
-            {loginError && <div className="text-center text-xs mt-2" style={{ color: 'var(--accent-rose)', fontWeight: 'bold' }}>{loginError}</div>}
-
-            <button type="submit" className="btn-primary" style={{ marginTop: '24px' }} disabled={isLoggingIn}>
-              {isLoggingIn ? 'Verifying...' : 'Sign In'}
+        {/* Theme Dropdown for Login */}
+        <div style={{
+          position: 'absolute',
+          top: '40px',
+          right: '40px',
+          zIndex: 10000
+        }}>
+          <div className="relative">
+            <button
+              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+              className="flex items-center gap-3 px-5 h-12 rounded-2xl glass-action shadow-xl hover:scale-105 transition-all"
+              style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', color: 'var(--text-main)', cursor: 'pointer' }}
+            >
+              <div className="flex flex-col items-start leading-tight">
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">Theme</span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">{theme}</span>
+              </div>
+              <ChevronDown size={14} className={`ml-2 transition-transform ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
             </button>
-          </form>
+
+            <AnimatePresence>
+              {isThemeMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute right-0 mt-3 p-3 rounded-2xl glass-panel shadow-2xl min-w-[200px]"
+                  style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', backdropFilter: 'blur(40px)' }}
+                >
+                  <div className="grid grid-cols-1 gap-2">
+                    {themes.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => {
+                          setTheme(t);
+                          localStorage.setItem('obd-theme', t);
+                          document.documentElement.setAttribute('data-theme', t);
+                          setIsThemeMenuOpen(false);
+                        }}
+                        className={`flex items-center gap-3 w-full p-3 rounded-xl transition-all ${theme === t ? 'bg-emerald-500/10 border-emerald-500/20' : 'hover:bg-white-5'}`}
+                        style={{ border: '1px solid transparent', cursor: 'pointer', textAlign: 'left' }}
+                      >
+                        <div style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: t === 'dark' ? '#0f172a' : t === 'light' ? '#fff' : t === 'midnight' ? '#1e1b4b' : t === 'cyberpunk' ? '#ff00ff' : t === 'forest' ? '#10b981' : '#a855f7',
+                          boxShadow: '0 0 10px rgba(0,0,0,0.1)'
+                        }} />
+                        <span
+                          className="text-[11px] font-bold uppercase tracking-wider"
+                          style={{ color: theme === t ? 'var(--accent-emerald)' : 'var(--text-main)' }}
+                        >
+                          {theme === t ? `• ${t}` : t}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+          className="relative z-10"
+          style={{
+            width: '100%',
+            maxWidth: '420px',
+            background: 'var(--bg-main)',
+            borderRadius: '40px',
+            boxShadow: theme === 'light'
+              ? '15px 15px 30px #d1d9e6, -15px -15px 30px #ffffff'
+              : '15px 15px 30px rgba(0,0,0,0.4), -15px -15px 30px rgba(255,255,255,0.02)',
+            overflow: 'hidden',
+            margin: '20px',
+            border: '1px solid var(--glass-border)'
+          }}
+        >
+          {/* Header Banner */}
+          <div style={{
+            background: 'linear-gradient(135deg, var(--accent-emerald) 0%, #059669 100%)',
+            padding: '40px 20px',
+            textAlign: 'center',
+            boxShadow: 'inset 0 -5px 15px rgba(0,0,0,0.1)'
+          }}>
+            <h1 style={{
+              color: 'white',
+              fontSize: '2.2rem',
+              fontWeight: '800',
+              letterSpacing: '-0.02em',
+              margin: 0,
+              textShadow: '0 2px 4px rgba(247, 247, 247, 0.5)'
+            }}>
+              Sign In
+            </h1>
+          </div>
+
+          {/* Form Section */}
+          <div style={{ padding: '50px 40px' }}>
+            <form onSubmit={handleLogin} className="flex flex-col gap-8">
+              <div className="flex flex-col gap-2">
+                <div style={{
+                  position: 'relative',
+                  background: 'var(--bg-main)',
+                  borderRadius: '20px',
+                  boxShadow: theme === 'light'
+                    ? 'inset 6px 6px 12px #d1d9e6, inset -6px -6px 12px #ffffff'
+                    : 'inset 6px 6px 12px rgba(0,0,0,0.5), inset -6px -6px 12px rgba(255,255,255,0.03)',
+                  padding: '5px'
+                }}>
+                  <input
+                    type="text"
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '15px 20px',
+                      fontSize: '1rem',
+                      color: 'var(--text-main)',
+                      outline: 'none',
+                      fontWeight: '500'
+                    }}
+                    placeholder="Username"
+                    value={loginCreds.username}
+                    onChange={(e) => setLoginCreds({ ...loginCreds, username: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div style={{
+                  position: 'relative',
+                  background: 'var(--bg-main)',
+                  borderRadius: '20px',
+                  boxShadow: theme === 'light'
+                    ? 'inset 6px 6px 12px #d1d9e6, inset -6px -6px 12px #ffffff'
+                    : 'inset 6px 6px 12px rgba(0,0,0,0.5), inset -6px -6px 12px rgba(255,255,255,0.03)',
+                  padding: '5px'
+                }}>
+                  <input
+                    type="password"
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '15px 20px',
+                      fontSize: '1rem',
+                      color: 'var(--text-main)',
+                      outline: 'none',
+                      fontWeight: '500'
+                    }}
+                    placeholder="Password"
+                    value={loginCreds.password}
+                    onChange={(e) => setLoginCreds({ ...loginCreds, password: e.target.value })}
+                    required
+                  />
+                </div>
+                <div style={{ textAlign: 'right', marginTop: '8px' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', cursor: 'pointer', fontWeight: '500' }}>Forgot Username / Password?</span>
+                </div>
+              </div>
+
+              {loginError && (
+                <div style={{
+                  background: 'rgba(244, 63, 94, 0.1)',
+                  border: '1px solid rgba(244, 63, 94, 0.2)',
+                  color: 'var(--accent-rose)',
+                  padding: '12px',
+                  borderRadius: '15px',
+                  fontSize: '0.8rem',
+                  textAlign: 'center',
+                  fontWeight: '600'
+                }}>
+                  {loginError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                style={{
+                  background: 'linear-gradient(135deg, var(--accent-emerald) 0%, #059669 100%)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '20px',
+                  padding: '18px',
+                  fontSize: '0.9rem',
+                  fontWeight: '800',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  cursor: 'pointer',
+                  boxShadow: theme === 'light'
+                    ? '6px 6px 12px #c1c9d6, -6px -6px 12px #ffffff'
+                    : '6px 6px 12px rgba(0,0,0,0.3)',
+                  transition: 'all 0.2s ease',
+                  marginTop: '10px'
+                }}
+                disabled={isLoggingIn}
+              >
+                {isLoggingIn ? 'Verifying...' : 'SIGN IN'}
+              </button>
+
+              <div style={{ textAlign: 'center', marginTop: '30px' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', margin: '0 0 10px 0' }}>Don't have an account?</p>
+                <span style={{ fontSize: '0.9rem', color: 'var(--accent-emerald)', fontWeight: '800', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sign Up Now</span>
+              </div>
+            </form>
+          </div>
         </motion.div>
       </div>
     );
@@ -421,7 +612,72 @@ export default function Dashboard() {
 
   if (currentView === 'landing') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen relative overflow-hidden" data-theme="dark" style={{ background: 'var(--bg-main)' }}>
+      <div className="flex flex-col items-center justify-center min-h-screen relative overflow-hidden" data-theme={theme} style={{ background: 'var(--bg-main)' }}>
+
+        {/* Theme Dropdown for Landing */}
+        <div style={{
+          position: 'absolute',
+          top: '40px',
+          left: '40px',
+          zIndex: 10000
+        }}>
+          <div className="relative">
+            <button
+              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+              className="flex items-center gap-3 px-5 h-12 rounded-2xl glass-action shadow-xl hover:scale-105 transition-all text-left"
+              style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', color: 'var(--text-main)', cursor: 'pointer' }}
+            >
+              <div className="flex flex-col items-start leading-tight">
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">Theme</span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">{theme}</span>
+              </div>
+              <ChevronDown size={14} className={`ml-2 transition-transform ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            <AnimatePresence>
+              {isThemeMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  className="absolute left-0 mt-3 p-3 rounded-2xl glass-panel shadow-2xl min-w-[200px]"
+                  style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', backdropFilter: 'blur(40px)' }}
+                >
+                  <div className="grid grid-cols-1 gap-2">
+                    {themes.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => {
+                          setTheme(t);
+                          localStorage.setItem('obd-theme', t);
+                          document.documentElement.setAttribute('data-theme', t);
+                          setIsThemeMenuOpen(false);
+                        }}
+                        className={`flex items-center gap-3 w-full p-3 rounded-xl transition-all ${theme === t ? 'bg-emerald-500/10 border-emerald-500/20' : 'hover:bg-white-5'}`}
+                        style={{ border: '1px solid transparent', cursor: 'pointer', textAlign: 'left' }}
+                      >
+                        <div style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: t === 'dark' ? '#0f172a' : t === 'light' ? '#fff' : t === 'midnight' ? '#1e1b4b' : t === 'cyberpunk' ? '#ff00ff' : t === 'forest' ? '#10b981' : '#a855f7',
+                          boxShadow: '0 0 10px rgba(0,0,0,0.1)'
+                        }} />
+                        <span
+                          className="text-[11px] font-bold uppercase tracking-wider"
+                          style={{ color: theme === t ? 'var(--accent-emerald)' : 'var(--text-main)' }}
+                        >
+                          {theme === t ? `• ${t}` : t}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
         <div style={{ position: 'absolute', top: '40px', right: '40px' }}>
           <button onClick={handleLogout} className="flex items-center gap-2 transition-all font-bold tracking-widest uppercase" style={{ color: 'var(--text-dim)', fontSize: '0.75rem', cursor: 'pointer', background: 'transparent', border: 'none' }}>
             <LogOut size={16} /> Logout
@@ -467,21 +723,39 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="dashboard-container">
+    <div className="dashboard-container" data-theme={theme}>
+
       <header>
-        <div className="flex items-center gap-4 cursor-pointer" onClick={() => setCurrentView('landing')}>
-          <h1 className="logo-text transition-colors">OBD OUTSMART</h1>
-          <div className="rounded border text-[10px] uppercase tracking-widest hidden md:block" style={{ background: 'rgba(255,255,255,0.05)', borderColor: 'var(--glass-border)', color: 'var(--text-dim)', padding: '4px 8px' }}>
+        <div className="flex items-center gap-4 cursor-pointer group" onClick={() => setCurrentView('landing')}>
+          <h1 className="logo-text transition-all group-hover:opacity-80" style={{
+            background: theme === 'light'
+              ? 'linear-gradient(135deg, var(--text-main) 0%, var(--accent-cyan) 50%, var(--accent-emerald) 100%)'
+              : 'linear-gradient(135deg, #fff 0%, var(--accent-cyan) 50%, var(--accent-blue) 100%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            fontSize: '1.8rem',
+            filter: 'none'
+          }}>
+            OBD OUTSMART
+          </h1>
+          <div className="rounded-full border text-[9px] font-black uppercase tracking-[0.2em] hidden md:block" style={{ background: 'var(--bg-glass)', borderColor: 'var(--glass-border)', color: 'var(--accent-cyan)', padding: '4px 12px' }}>
             Scrubber Pipeline
           </div>
         </div>
         <div className="flex items-center gap-3">
           {/* Status Indicator */}
-          <div className="hidden lg-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white-5 border border-white-10 shadow-sm">
-            <div className="w-1.5 h-1.5 rounded-full animate-pulse shadow-[0_0_8px_currentColor]" style={{ backgroundColor: apiColor, color: apiColor }}></div>
-            <span className="text-[10px] uppercase tracking-widest font-black opacity-60" style={{ color: apiColor }}>
-              {backendStatus}
-            </span>
+          <div className="flex items-center gap-2 px-4 h-11 rounded-xl bg-white-5 border border-white-10 shadow-lg transition-all hover:bg-white-10">
+            <div
+              className="w-2 h-2 rounded-full animate-pulse shadow-[0_0_12px_currentColor]"
+              style={{ backgroundColor: apiColor, color: apiColor }}
+            ></div>
+            <div className="flex flex-col items-start leading-none">
+              <span className="text-[8px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5" style={{ color: 'var(--text-main)' }}>Backend</span>
+              <span className="text-[10px] uppercase tracking-widest font-extrabold" style={{ color: apiColor }}>
+                {backendStatus}
+              </span>
+            </div>
           </div>
 
           {/* System Hub */}
@@ -489,12 +763,11 @@ export default function Dashboard() {
             onClick={() => setIsMenuOpen(!isMenuOpen)}
             className="flex items-center gap-3 px-4 h-11 rounded-2xl glass-action group shadow-lg"
           >
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-500 group-hover-rotate-90" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--accent-cyan)' }}>
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-500 group-hover-rotate-90" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--accent-cyan)' }}>
               <Menu size={18} />
             </div>
             <div className="flex flex-col items-start leading-tight pr-2 text-left">
-              <span className="text-[9px] font-black uppercase tracking-[0.1em] opacity-50" style={{ color: 'var(--text-main)' }}>Control</span>
-              <span className="text-[9px] font-bold uppercase tracking-tight" style={{ color: 'var(--accent-cyan)' }}>Hub Center</span>
+              <span className="text-[9px] font-black uppercase tracking-[0.1em] opacity-50" style={{ color: 'var(--text-main)' }}>Menu</span>
             </div>
           </button>
         </div>
@@ -529,11 +802,11 @@ export default function Dashboard() {
                 top: 0,
                 right: 0,
                 height: '100vh',
-                width: '320px',
+                width: '380px',
                 background: 'var(--bg-glass-heavy)',
                 backdropFilter: 'blur(40px)',
                 borderLeft: '1px solid var(--glass-border)',
-                boxShadow: '-20px 0 50px rgba(0,0,0,0.5)',
+                boxShadow: '-10px 0 40px rgba(255, 255, 255, 0.5)',
                 zIndex: 101,
                 display: 'flex',
                 flexDirection: 'column',
@@ -556,7 +829,7 @@ export default function Dashboard() {
                   className="flex items-center gap-4 transition-all group"
                   style={{ padding: '24px 32px', cursor: 'pointer', borderLeft: '4px solid transparent' }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.36)';
                     e.currentTarget.style.borderLeftColor = 'var(--accent-cyan)';
                   }}
                   onMouseLeave={(e) => {
@@ -626,7 +899,7 @@ export default function Dashboard() {
                                 t === 'midnight' ? 'linear-gradient(135deg, #050510 0%, #312e81 100%)' :
                                   t === 'cyberpunk' ? 'linear-gradient(135deg, #0a011a 0%, #701a75 100%)' :
                                     t === 'forest' ? 'linear-gradient(135deg, #061006 0%, #064e3b 100%)' :
-                                      'linear-gradient(135deg, #0a0a1a 0%, #4c1d95 100%)'
+                                      'linear-gradient(135deg, #1a1a61ff 0%, #4c1d95 100%)'
                           }} />
 
                           {/* Accent preview dots */}
@@ -919,7 +1192,7 @@ export default function Dashboard() {
                 onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
               >
                 <div className={`flex items-center justify-center rounded-lg border-2 ${scrubOptions[opt] ? 'bg-cyan-400 border-cyan-400' : 'bg-slate-800 border-slate-600'} transition-all`} style={{ width: '22px', height: '22px' }}>
-                  {scrubOptions[opt] && <CheckCircle2 size={14} strokeWidth={3} color="#0be881ff" />}
+                  {scrubOptions[opt] && <CheckCircle2 size={14} strokeWidth={3} color="#0be881" />}
                 </div>
                 <div className="flex flex-col">
                   <span className="text-sm font-bold uppercase tracking-widest text-slate-200">
@@ -1287,10 +1560,10 @@ export default function Dashboard() {
                 >
                   <Zap size={16} fill="white" />
                   Initialize & Launch Campaign
-                </button>
-              </div>
-            </div>
-          </div>
+                </button >
+              </div >
+            </div >
+          </div >
         )
       }
     </div >
