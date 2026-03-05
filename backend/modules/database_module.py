@@ -10,8 +10,8 @@ class DatabaseModule:
         self.db_type = os.getenv("DB_TYPE", "postgresql") 
         # Consolidate URL and Handle Fallbacks
         self.url = os.getenv("DATABASE_URL")
-        self.init_error = "" # Initialize as string
-        self.last_error = "" # Initialize for tracking recent operations
+        self.init_error: str = "" # Initialize as string
+        self.last_error: str = "" # Initialize for tracking recent operations
         if self.url:
             if self.url.startswith("postgres://"):
                 self.url = self.url.replace("postgres://", "postgresql://", 1)
@@ -33,7 +33,7 @@ class DatabaseModule:
             self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
         
         url = self.url
-        self.init_error = None
+        self.init_error = ""
             
         try:
             # Handle PostgreSQL Connectors (Supabase/Render/Postgres)
@@ -124,7 +124,7 @@ class DatabaseModule:
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS admin_users (
+            CREATE TABLE IF NOT EXISTS user_details (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
@@ -134,7 +134,23 @@ class DatabaseModule:
             "CREATE INDEX IF NOT EXISTS idx_dnd_msisdn ON dnd_list(msisdn);",
             "CREATE INDEX IF NOT EXISTS idx_subs_msisdn ON subscriptions(msisdn);",
             "CREATE INDEX IF NOT EXISTS idx_unsubs_msisdn ON unsubscriptions(msisdn);",
-            "CREATE INDEX IF NOT EXISTS idx_camp_msisdn ON campaign_targets(msisdn);"
+            "CREATE INDEX IF NOT EXISTS idx_camp_msisdn ON campaign_targets(msisdn);",
+            """
+            CREATE TABLE IF NOT EXISTS email_sync_log (
+                id SERIAL PRIMARY KEY,
+                email_uid VARCHAR(255) UNIQUE NOT NULL,
+                filename VARCHAR(255),
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS email_sourced_targets (
+                id SERIAL PRIMARY KEY,
+                msisdn VARCHAR(20) NOT NULL,
+                email_uid VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
         ]
         try:
             with self.engine.connect() as connection:
@@ -144,7 +160,7 @@ class DatabaseModule:
                 
             # Create a default user if empty
             with self.engine.connect() as connection:
-                count = connection.execute(text("SELECT COUNT(*) FROM admin_users")).scalar()
+                count = connection.execute(text("SELECT COUNT(*) FROM user_details")).scalar()
                 if count == 0:
                     self.create_admin_user("admin", "admin123")
         except Exception as e:
@@ -158,7 +174,7 @@ class DatabaseModule:
         try:
             with self.engine.connect() as conn:
                 conn.execute(
-                    text("INSERT INTO admin_users (username, password_hash) VALUES (:u, :p) ON CONFLICT (username) DO NOTHING"),
+                    text("INSERT INTO user_details (username, password_hash) VALUES (:u, :p) ON CONFLICT (username) DO NOTHING"),
                     {"u": username, "p": pwd_hash}
                 )
                 conn.commit()
@@ -172,7 +188,7 @@ class DatabaseModule:
         try:
             with self.engine.connect() as conn:
                 res = conn.execute(
-                    text("SELECT password_hash FROM admin_users WHERE username = :u"),
+                    text("SELECT password_hash FROM user_details WHERE username = :u"),
                     {"u": username}
                 ).fetchone()
                 if res:
@@ -467,3 +483,68 @@ class DatabaseModule:
         """Checks which MSISDNs have unsubscribed (Batch-Optimized)."""
         query = "SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns"
         return self._chunked_lookup(msisdns, query)
+
+    def save_email_csv_data(self, uid, filename, msisdns):
+        """Legacy method - redirects to new table method."""
+        return self.save_email_csv_to_new_table(uid, filename, msisdns)
+
+    def save_email_csv_to_new_table(self, uid, filename, msisdns):
+        """
+        Saves MSISDNs from an email CSV into a NEW timestamped table.
+        Each scrub creates its own table: email_csv_YYYYMMDD_HHMMSS
+        Uses psycopg2 execute_values for fast bulk insert.
+        """
+        if not msisdns:
+            return True, "No MSISDNs to save."
+
+        from datetime import datetime
+        import re
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        table_name = f"email_csv_{timestamp}"
+        
+        try:
+            raw_conn = self.engine.raw_connection()
+            cursor = raw_conn.cursor()
+            
+            # 1. Check if UID already processed
+            cursor.execute("SELECT 1 FROM email_sync_log WHERE email_uid = %s", (str(uid),))
+            if cursor.fetchone():
+                cursor.close()
+                raw_conn.close()
+                return False, f"Email UID {uid} already processed."
+            
+            # 2. Create NEW timestamped table
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id SERIAL PRIMARY KEY,
+                    msisdn VARCHAR(20) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 3. Fast bulk insert using psycopg2 execute_values
+            from psycopg2.extras import execute_values
+            data = [(str(m),) for m in msisdns]
+            print(f"DEBUG: Bulk inserting {len(data)} rows into {table_name}...")
+            execute_values(
+                cursor,
+                f"INSERT INTO {table_name} (msisdn) VALUES %s",
+                data,
+                page_size=10000
+            )
+            
+            # 4. Log the sync
+            cursor.execute(
+                "INSERT INTO email_sync_log (email_uid, filename) VALUES (%s, %s)",
+                (str(uid), f"{filename} -> {table_name}")
+            )
+            
+            raw_conn.commit()
+            cursor.close()
+            raw_conn.close()
+            return True, table_name
+        except Exception as e:
+            err_msg = f"Email CSV Sync Error: {str(e)}"
+            print(err_msg)
+            return False, err_msg

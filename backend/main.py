@@ -8,8 +8,14 @@ from modules.alerting_system import AlertingSystem
 from modules.upload_handler import UploadHandler
 from modules.database_module import DatabaseModule
 from agents.obd_prompt_agent import OBDPromptAgent
+from agents.email_csv_agent import EmailCSVAgent
+from modules.voip_module import voip_module
+from modules.logging_system import logger
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, Response
 import os
+import threading
+import asyncio
 
 app = FastAPI(title="Outsmart OBD Agent API")
 
@@ -44,6 +50,8 @@ async def root():
         "host": os.getenv("RENDER_HOSTNAME", "localhost")
     }
 
+# No background email polling - agent is triggered after scrubbing or manually
+
 class FlowRequest(BaseModel):
     email_context: str
 
@@ -67,6 +75,12 @@ class LogScrubRequest(BaseModel):
     unsub_removed: int
     operator_removed: int
     msisdn_list: List[str] = []
+
+class FlowXMLRequest(BaseModel):
+    xml_content: str
+
+class FlowDocRequest(BaseModel):
+    doc_text: str
 
 class LoginRequest(BaseModel):
     username: str
@@ -113,7 +127,7 @@ async def scrub_base(request: ProcessRequest, background_tasks: BackgroundTasks)
         if final_base:
             background_tasks.add_task(post_scrub_processing, final_base, report)
 
-        print(f"DEBUG: Scrub complete. Final count: {len(final_base)}. Post-processing queued.")
+        logger.log("backend", "success", f"Scrub complete. Final count: {len(final_base)}. Post-processing queued.", "scrub")
         return {
             "final_base_count": len(final_base), 
             "final_base": final_base, 
@@ -121,39 +135,64 @@ async def scrub_base(request: ProcessRequest, background_tasks: BackgroundTasks)
             "tasks_status": "QUEUED"
         }
     except Exception as e:
-        print(f"DEBUG: Scrub error: {e}")
+        logger.log("backend", "error", f"Scrub error: {e}", "scrub")
         raise HTTPException(status_code=500, detail=str(e))
 
 def post_scrub_processing(final_base, report):
     """Heavy I/O tasks run in background to prevent UI timeouts."""
     import time
     start_time = time.time()
-    print("--- STARTING POST-SCRUB BACKGROUND PROCESSING ---")
+    logger.log("backend", "info", "Starting post-scrub background processing...", "post_scrub")
     
-    # 1. Save to Database FIRST (So UI has immediate access to results)
+    # 1. Save to Database
     table_name = "NONE"
     try:
-        print(f"DEBUG: Saving {len(final_base)} targets to database...")
+        logger.log("database", "info", f"Saving {len(final_base)} targets to database...", "scrub_results")
         db_start = time.time()
         save_ok, table_name = db.save_verified_scrub_results(final_base)
         duration = time.time() - db_start
-        print(f"DEBUG: DB Save Status: {'SUCCESS (' + table_name + ')' if save_ok else 'FAILED'} (Took {duration:.2f}s)")
+        if save_ok:
+            logger.log("database", "success", f"Scrub results saved to '{table_name}' ({duration:.2f}s)", "scrub_results")
+        else:
+            logger.log("database", "error", f"Failed to save scrub results ({duration:.2f}s)", "scrub_results")
     except Exception as e:
-        print(f"ERROR: Background DB save failed: {e}")
+        logger.log("database", "error", f"DB save failed: {e}", "scrub_results")
 
-    # 2. Email Report SECOND (Subject to network firewalls/timeouts)
+    # 2. Email Report
     try:
-        print(f"DEBUG: Sending scrubbing report via email...")
+        logger.log("email", "info", "Sending scrubbing report via email...", "scrub_report")
         email_ok, email_msg = email_module.send_scrub_report(report, msisdns=final_base)
-        print(f"DEBUG: Email Status: {'SENT' if email_ok else 'FAILED: ' + email_msg}")
+        if email_ok:
+            logger.log("email", "success", "Scrubbing report email sent successfully", "scrub_report")
+        else:
+            logger.log("email", "error", f"Email failed: {email_msg}", "scrub_report")
     except Exception as e:
-        print(f"ERROR: Background email failed: {e}")
+        logger.log("email", "error", f"Email sending failed: {e}", "scrub_report")
+
+    # 3. Auto-trigger Email CSV Sync Agent
+    try:
+        logger.log("email", "info", "Auto-triggering Email CSV Sync Agent (10 min polling)...", "csv_sync")
+        agent = EmailCSVAgent()
+        sync_thread = threading.Thread(
+            target=lambda: agent.wait_and_sync(poll_interval=30, max_wait=600),
+            daemon=True
+        )
+        sync_thread.start()
+        logger.log("email", "success", "Email CSV Sync Agent started in background", "csv_sync")
+    except Exception as e:
+        logger.log("email", "error", f"Failed to start CSV Sync Agent: {e}", "csv_sync")
         
-    print(f"--- COMPLETED POST-SCRUB BACKGROUND PROCESSING (Total: {time.time() - start_time:.2f}s) ---")
+    duration = time.time() - start_time
+    logger.log("backend", "success", f"Post-scrub processing completed ({duration:.2f}s)", "post_scrub")
 
 class LaunchRequest(BaseModel):
     msisdn_list: List[str]
     project_name: str = "default"
+
+class VOIPRequest(BaseModel):
+    msisdn: str
+    shortcode: str
+    script: Optional[str] = None
 
 @app.post("/launch-campaign")
 async def launch_campaign(request: LaunchRequest):
@@ -217,26 +256,225 @@ async def verify_email():
         raise HTTPException(status_code=500, detail=f"Email Verification Failed: {message}")
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Handles MSISDN file uploads."""
+async def upload_file(file: UploadFile = File(...), account: str = Form("")):
+    """Handles MSISDN file uploads with optional account tagging."""
     try:
         content = await file.read()
         extension = os.path.splitext(file.filename)[1]
         msisdns = upload_handler.process_file(content, extension)
-        res_data = {"count": len(msisdns), "msisdns": msisdns, "total": len(msisdns)}
-        print(f"DEBUG: Returning response with total: {res_data['total']}")
+        
+        # Log upload metadata to database
+        if account and db.engine:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS upload_history (
+                            id SERIAL PRIMARY KEY,
+                            account VARCHAR(100) NOT NULL,
+                            filename VARCHAR(255),
+                            msisdn_count INT DEFAULT 0,
+                            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    conn.execute(
+                        text("INSERT INTO upload_history (account, filename, msisdn_count) VALUES (:account, :filename, :count)"),
+                        {"account": account, "filename": file.filename, "count": len(msisdns)}
+                    )
+                    conn.commit()
+                    print(f"DEBUG: Upload logged for account '{account}': {file.filename} ({len(msisdns)} records)")
+            except Exception as db_err:
+                print(f"DEBUG: Upload history log warning (non-fatal): {db_err}")
+
+        res_data = {"count": len(msisdns), "msisdns": msisdns, "total": len(msisdns), "account": account}
+        print(f"DEBUG: Returning response with total: {res_data['total']}, account: {account}")
         return res_data
     except Exception as e:
         print(f"DEBUG: Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/upload-history")
+async def get_upload_history(account: str = None):
+    """Fetches upload history, optionally filtered by account."""
+    if not db.engine:
+        return {"data": []}
+    try:
+        with db.engine.connect() as conn:
+            if account:
+                rows = conn.execute(
+                    text("SELECT * FROM upload_history WHERE account = :account ORDER BY uploaded_at DESC LIMIT 50"),
+                    {"account": account}
+                )
+            else:
+                rows = conn.execute(text("SELECT * FROM upload_history ORDER BY uploaded_at DESC LIMIT 50"))
+            data = [dict(r) for r in rows.mappings()]
+            for entry in data:
+                for k, v in entry.items():
+                    if hasattr(v, 'isoformat'):
+                        entry[k] = v.isoformat()
+            return {"data": data}
+    except Exception as e:
+        print(f"DEBUG: Upload history error: {e}")
+        return {"data": []}
+
+@app.post("/trigger-email-sync")
+async def trigger_email_sync():
+    """Triggers the email CSV sync agent in a background thread.
+    The agent will poll for a new scrub report email for up to 10 minutes.
+    """
+    def _run_sync():
+        agent = EmailCSVAgent()
+        result = agent.wait_and_sync(poll_interval=30, max_wait=600)
+        if result:
+            print(f"✅ EMAIL SYNC COMPLETE: Data saved to table '{result}'")
+        else:
+            print("⏰ EMAIL SYNC: No new email found.")
+    
+    thread = threading.Thread(target=_run_sync, daemon=True)
+    thread.start()
+    return {"status": "started", "message": "Email sync agent started. Polling for 10 minutes..."}
+
+@app.post("/trigger-voip-call")
+async def trigger_voip_call(request: VOIPRequest):
+    """Triggers a VOIP call via the VOIP module."""
+    success, message = voip_module.trigger_call(
+        request.msisdn, 
+        request.shortcode,
+        script=request.script
+    )
+    if success:
+        return {"status": "success", "message": message}
+    else:
+        raise HTTPException(status_code=500, detail=message)
+
+@app.get("/voip/virtual-calls")
+async def get_virtual_calls():
+    """Returns active virtual calls for the developer lab."""
+    from modules.voip_module import active_virtual_calls
+    return {"calls": active_virtual_calls}
+
+@app.post("/voip/virtual-respond")
+async def respond_virtual_call(call_id: str = Form(...), action: str = Form(...)):
+    """Handles developer interaction (Answer/Hangup) in the Virtual Lab."""
+    from modules.voip_module import active_virtual_calls
+    if call_id in active_virtual_calls:
+        if action == "hangup":
+            del active_virtual_calls[call_id]
+        else:
+            active_virtual_calls[call_id]["status"] = action
+        return {"status": "ok"}
+    raise HTTPException(status_code=404, detail="Call not found")
+
+@app.post("/generate-flow-json")
+async def flow_json_from_doc(request: FlowDocRequest):
+    """Generates a React Flow JSON from document text."""
+    try:
+        flow_str = prompt_agent.generate_flow_json(request.doc_text)
+        import json
+        return json.loads(flow_str)
+    except Exception as e:
+        print(f"Error in flow_json_from_doc: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-flow-json-from-xml")
+async def flow_json_from_xml(request: FlowXMLRequest):
+    """Generates a React Flow JSON from XML content."""
+    try:
+        flow_str = prompt_agent.generate_flow_json_from_xml(request.xml_content)
+        import json
+        return json.loads(flow_str)
+    except Exception as e:
+        print(f"Error in flow_json_from_xml: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/generate-flow-from-doc")
-async def flow_from_doc(doc_text: str = Form(...)):
+async def flow_from_doc(request: FlowDocRequest):
     """Generates a flow diagram from document text."""
     try:
-        flow = prompt_agent.generate_flow_from_doc(doc_text)
+        flow = prompt_agent.generate_flow_from_doc(request.doc_text)
         return {"flow": flow}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-flow-from-xml")
+async def flow_from_xml(request: FlowXMLRequest):
+    """Generates a flow diagram from XML content."""
+    try:
+        flow = prompt_agent.generate_flow_from_xml(request.xml_content)
+        return {"flow": flow}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/export-flow-pdf")
+async def export_flow_pdf(mermaid_code: str = Form(...), campaign_name: str = Form("AI Campaign")):
+    """Exports a mermaid diagram to a branded PDF using Mermaid.ink."""
+    try:
+        import requests
+        import base64
+        from fpdf import FPDF
+        import tempfile
+
+        # Mermaid code needs to be base64 encoded for mermaid.ink
+        # We wrap it in a JSON structure that mermaid.ink expects for the /img/ endpoint optionally, 
+        # but the simple base64 of the string also works for many diagrams.
+        graph_bytes = mermaid_code.encode("utf-8")
+        base64_graph = base64.b64encode(graph_bytes).decode("utf-8")
+        image_url = f"https://mermaid.ink/img/{base64_graph}"
+        
+        # Download image
+        response = requests.get(image_url)
+        if response.status_code != 200:
+            # Fallback: try with dark theme if default fails or looks bad
+            image_url += "?theme=dark"
+            response = requests.get(image_url)
+            if response.status_code != 200:
+                raise Exception("Failed to generate diagram image from Mermaid.ink. Please check if your diagram code is valid.")
+            
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_img:
+            tmp_img.write(response.content)
+            img_path = tmp_img.name
+            
+        # Create PDF
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # Branding Header
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_text_color(225, 29, 72) # Rose color
+        pdf.cell(0, 25, "OUTSMART GLOBAL", ln=True, align="C")
+        
+        pdf.set_font("Helvetica", "B", 18)
+        pdf.set_text_color(15, 23, 42) # Dark Slate
+        pdf.cell(0, 10, "AI CAMPAIGN STUDIO", ln=True, align="C")
+        
+        pdf.ln(5)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_text_color(100, 116, 139)
+        pdf.cell(0, 10, f"Campaign Blueprint: {campaign_name}", ln=True, align="C")
+        pdf.ln(10)
+        
+        # Flow Diagram Image
+        # Scaling to fit width while maintaining aspect ratio
+        pdf.image(img_path, x=10, y=None, w=190)
+        
+        # Footer
+        pdf.set_y(-30)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(148, 163, 184)
+        pdf.cell(0, 10, "CONFIDENTIAL - Generated by Outsmart AI Agent", ln=0, align="L")
+        pdf.cell(0, 10, f"Generated on: {os.popen('date').read().strip()}", ln=0, align="R")
+        
+        pdf_bytes = pdf.output()
+        
+        # Cleanup
+        os.remove(img_path)
+        
+        from fastapi.responses import Response
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={
+            "Content-Disposition": f"attachment; filename=campaign_flow_{campaign_name.replace(' ', '_')}.pdf"
+        })
+        
+    except Exception as e:
+        print(f"PDF Export Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate-content")
@@ -306,6 +544,36 @@ async def health_check():
         "database_type": db.db_type,
         "alerts": alerts
     }
+
+# --- Logging Dashboard API ---
+@app.get("/logs")
+async def get_logs(category: str = None, since_id: int = 0):
+    """Returns logs, optionally filtered by category. Supports polling via since_id."""
+    return {
+        "logs": logger.get_logs(category=category, since_id=since_id),
+        "stats": logger.get_stats()
+    }
+
+@app.post("/logs/clear")
+async def clear_logs(category: str = None):
+    """Clears logs, optionally for a specific category."""
+    logger.clear(category)
+    return {"status": "cleared", "category": category or "all"}
+
+@app.post("/logs/add")
+async def add_frontend_log(level: str = Form("info"), message: str = Form(...)):
+    """Allows the frontend to push its own logs."""
+    logger.log("frontend", level, message, "browser")
+    return {"status": "logged"}
+
+@app.get("/logging-dashboard", response_class=HTMLResponse)
+async def logging_dashboard():
+    """Serves the logging dashboard."""
+    dashboard_path = os.path.join(os.path.dirname(__file__), "static", "logging_dashboard.html")
+    if os.path.exists(dashboard_path):
+        with open(dashboard_path, "r") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
 
 if __name__ == "__main__":
     import uvicorn

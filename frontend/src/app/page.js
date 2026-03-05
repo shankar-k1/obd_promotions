@@ -4,6 +4,7 @@ import PerformanceReport from '@/components/PerformanceReport';
 import MermaidViewer from '@/components/MermaidViewer';
 import FileUploadZone from '@/components/FileUploadZone';
 import { motion, AnimatePresence } from 'framer-motion';
+import CampaignFlowVisualizer from './components/CampaignFlowVisualizer';
 import {
   Database,
   ShieldCheck,
@@ -31,7 +32,9 @@ import {
   Users,
   PieChart,
   Palette,
-  ChevronDown
+  ChevronDown,
+  Phone,
+  PhoneOutgoing
 } from 'lucide-react';
 const getApiBase = () => {
   if (typeof window === 'undefined') return 'http://localhost:8000';
@@ -50,6 +53,7 @@ const getApiBase = () => {
 const API_BASE = getApiBase();
 
 export default function Dashboard() {
+  const [selectedAccount, setSelectedAccount] = useState('');
   const [counts, setCounts] = useState({ total: 0, scrubbed: 0, final: 0 });
   const [prompts, setPrompts] = useState([
     "Win a new car today! Press 1 to join our lucky draw.",
@@ -64,12 +68,16 @@ export default function Dashboard() {
   });
   const [docText, setDocText] = useState('');
   const [mermaidFlow, setMermaidFlow] = useState('');
+  const [reactFlowData, setReactFlowData] = useState({ nodes: [], edges: [] });
   const [flowLoading, setFlowLoading] = useState(false);
   const [flowError, setFlowError] = useState('');
 
   const [msisdnList, setMsisdnList] = useState([]);
   const [cleanedMsisdns, setCleanedMsisdns] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [xmlContent, setXmlContent] = useState('');
+  const [studioMode, setStudioMode] = useState('strategy'); // 'strategy' or 'xml'
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [dbStats, setDbStats] = useState({ dnd_count: null, sub_count: null, unsub_count: null });
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [backendStatus, setBackendStatus] = useState('Checking...');
@@ -80,6 +88,14 @@ export default function Dashboard() {
     msc_ip: '',
     cli: ''
   });
+
+  // VOIP State
+  const [voipMsisdn, setVoipMsisdn] = useState('');
+  const [voipShortcode, setVoipShortcode] = useState('5566');
+  const [voipScript, setVoipScript] = useState('Hello, this is a test call from the Outsmart Global OBD platform. Have a great day!');
+  const [voipLoading, setVoipLoading] = useState(false);
+  const [voipResult, setVoipResult] = useState(null);
+  const [activeVirtualCall, setActiveVirtualCall] = useState(null);
 
   // Theme State & Persistence
   const [theme, setTheme] = useState('dark');
@@ -93,7 +109,10 @@ export default function Dashboard() {
   const [currentView, setCurrentView] = useState('landing');
   const [loginCreds, setLoginCreds] = useState({ username: '', password: '' });
   const [loginError, setLoginError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('obd_token');
@@ -117,6 +136,32 @@ export default function Dashboard() {
       } else {
         const err = await res.json();
         setLoginError(err.detail || 'Invalid credentials');
+      }
+    } catch (err) {
+      setLoginError('Network Error. Is backend running?');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    setSuccessMsg('');
+    setIsLoggingIn(true);
+    try {
+      const res = await fetch(`${API_BASE}/create-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginCreds)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSuccessMsg(data.message || 'User created. Please log in.');
+        setIsCreatingUser(false);
+      } else {
+        const err = await res.json();
+        setLoginError(err.detail || 'Failed to create user');
       }
     } catch (err) {
       setLoginError('Network Error. Is backend running?');
@@ -265,6 +310,7 @@ export default function Dashboard() {
     setLoading(true);
     setSessionStats({ dnd: 0, sub: 0, unsub: 0, operator: 0 });
     setCleanedMsisdns([]);
+    if (data.account) setSelectedAccount(data.account);
 
     const newList = data.msisdns || [];
     setMsisdnList(newList);
@@ -348,28 +394,158 @@ export default function Dashboard() {
   };
 
   const generateFlowFromDoc = async () => {
-    if (!docText.trim()) return;
+    if (studioMode === 'strategy' && !docText.trim()) return;
+    if (studioMode === 'xml' && !xmlContent.trim()) return;
+
     setFlowLoading(true);
     setFlowError('');
-    setMermaidFlow('');
+    setReactFlowData({ nodes: [], edges: [] });
     try {
-      const formData = new FormData();
-      formData.append('doc_text', docText);
-      const res = await fetch(`${API_BASE}/generate-flow-from-doc`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (data.flow) {
-        setMermaidFlow(data.flow);
+      let endpoint = `${API_BASE}/generate-flow-json`;
+      let payload = {};
+
+      if (studioMode === 'xml') {
+        payload = { xml_content: xmlContent };
+        endpoint = `${API_BASE}/generate-flow-json-from-xml`;
       } else {
-        setFlowError('No flow returned. Check your API key or try again.');
+        payload = { doc_text: docText };
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Internal AI Error');
+      }
+
+      const data = await res.json();
+
+      if (data.nodes && data.nodes.length > 0) {
+        // Auto-layout logic (Simple grid/tree)
+        const layoutedNodes = data.nodes.map((node, index) => ({
+          ...node,
+          position: { x: (index % 3) * 300 + 100, y: Math.floor(index / 3) * 200 + 50 }
+        }));
+        setReactFlowData({ nodes: layoutedNodes, edges: data.edges || [] });
+      } else {
+        setFlowError('The AI Architect could not detect logical nodes in this input. Try being more specific or simplifying the strategy.');
       }
     } catch (err) {
       console.error('Flow generation failed', err);
-      setFlowError('Failed to connect to backend. Is it running?');
+      setFlowError(`AI Architect Failed: ${err.message}`);
     } finally {
       setFlowLoading(false);
+    }
+  };
+
+  const downloadFlowPdf = async () => {
+    if (!mermaidFlow) return;
+    setPdfLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('mermaid_code', mermaidFlow);
+      formData.append('campaign_name', scheduleData.obd_name || 'AI Campaign Studio');
+
+      const res = await fetch(`${API_BASE}/export-flow-pdf`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Campaign_Flow_${Date.now()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        const err = await res.json();
+        alert(`PDF Export Failed: ${err.detail || 'Server error'}`);
+      }
+    } catch (err) {
+      console.error('PDF export failed', err);
+      alert('Network error during PDF export.');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleVoipCall = async (e) => {
+    e.preventDefault();
+    if (!voipMsisdn) return;
+    setVoipLoading(true);
+    setVoipResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/trigger-voip-call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          msisdn: voipMsisdn,
+          shortcode: voipShortcode,
+          script: voipScript
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setVoipResult({ success: true, message: data.message });
+      } else {
+        setVoipResult({ success: false, message: data.detail || 'Call failed' });
+      }
+    } catch (err) {
+      setVoipResult({ success: false, message: 'Network Error' });
+    } finally {
+      setVoipLoading(false);
+    }
+  };
+
+  // Virtual VOIP Polling & Simulation
+  useEffect(() => {
+    let pollInterval;
+    if (isAuthenticated) {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`${API_BASE}/voip/virtual-calls`);
+          const data = await res.json();
+          const calls = Object.entries(data.calls || {});
+          if (calls.length > 0) {
+            const [id, callData] = calls[0];
+            setActiveVirtualCall({ id, ...callData });
+          } else {
+            setActiveVirtualCall(null);
+          }
+        } catch (err) {
+          console.error("Signal Error:", err);
+        }
+      }, 2000);
+    }
+    return () => clearInterval(pollInterval);
+  }, [isAuthenticated]);
+
+  const handleVirtualRespond = async (action) => {
+    if (!activeVirtualCall) return;
+    const body = new FormData();
+    body.append('call_id', activeVirtualCall.id);
+    body.append('action', action);
+
+    await fetch(`${API_BASE}/voip/virtual-respond`, {
+      method: 'POST',
+      body
+    });
+
+    if (action === 'answered') {
+      // Simulate IVR Audio
+      const msg = new SpeechSynthesisUtterance(activeVirtualCall.script);
+      msg.rate = 0.9;
+      window.speechSynthesis.speak(msg);
+    } else if (action === 'hangup') {
+      window.speechSynthesis.cancel();
+      setActiveVirtualCall(null);
     }
   };
 
@@ -490,13 +666,23 @@ export default function Dashboard() {
               margin: 0,
               textShadow: '0 2px 4px rgba(247, 247, 247, 0.5)'
             }}>
-              Sign In
+              {isCreatingUser ? 'Admin Setup' : 'Sign In'}
             </h1>
+            <p style={{
+              color: 'rgba(255,255,255,0.7)',
+              fontSize: '0.813rem',
+              marginTop: '8px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              fontWeight: '600'
+            }}>
+              {isCreatingUser ? 'Create new admin credentials' : 'Authenticate to continue'}
+            </p>
           </div>
 
           {/* Form Section */}
-          <div style={{ padding: '50px 40px' }}>
-            <form onSubmit={handleLogin} className="flex flex-col gap-8">
+          <div style={{ padding: '40px' }}>
+            <form onSubmit={isCreatingUser ? handleCreateUser : handleLogin} className="flex flex-col gap-6">
               <div className="flex flex-col gap-2">
                 <div style={{
                   position: 'relative',
@@ -556,9 +742,33 @@ export default function Dashboard() {
                   />
                 </div>
                 <div style={{ textAlign: 'right', marginTop: '8px' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', cursor: 'pointer', fontWeight: '500' }}>Forgot Username / Password?</span>
+                  <span
+                    onClick={() => {
+                      setIsCreatingUser(!isCreatingUser);
+                      setLoginError('');
+                      setSuccessMsg('');
+                    }}
+                    style={{ fontSize: '0.75rem', color: 'var(--text-dim)', cursor: 'pointer', fontWeight: '500' }}
+                  >
+                    {isCreatingUser ? 'Cancel (Back to Login)' : 'Forgot Username/Password? Create New'}
+                  </span>
                 </div>
               </div>
+
+              {successMsg && (
+                <div style={{
+                  background: 'rgba(16, 185, 129, 0.1)',
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                  color: 'var(--accent-emerald)',
+                  padding: '12px',
+                  borderRadius: '15px',
+                  fontSize: '0.8rem',
+                  textAlign: 'center',
+                  fontWeight: '600'
+                }}>
+                  {successMsg}
+                </div>
+              )}
 
               {loginError && (
                 <div style={{
@@ -577,8 +787,11 @@ export default function Dashboard() {
 
               <button
                 type="submit"
+                disabled={isLoggingIn}
                 style={{
-                  background: 'linear-gradient(135deg, var(--accent-emerald) 0%, #059669 100%)',
+                  background: isCreatingUser
+                    ? 'linear-gradient(135deg, var(--accent-purple) 0%, #7c3aed 100%)'
+                    : 'linear-gradient(135deg, var(--accent-emerald) 0%, #059669 100%)',
                   color: 'white',
                   border: 'none',
                   borderRadius: '20px',
@@ -587,16 +800,16 @@ export default function Dashboard() {
                   fontWeight: '800',
                   textTransform: 'uppercase',
                   letterSpacing: '0.1em',
-                  cursor: 'pointer',
+                  cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+                  opacity: isLoggingIn ? 0.7 : 1,
                   boxShadow: theme === 'light'
-                    ? '6px 6px 12px #c1c9d6, -6px -6px 12px #ffffff'
-                    : '6px 6px 12px rgba(0,0,0,0.3)',
-                  transition: 'all 0.2s ease',
-                  marginTop: '10px'
+                    ? '6px 6px 12px #d1d9e6, -6px -6px 12px #ffffff'
+                    : '6px 6px 12px rgba(0,0,0,0.5), -6px -6px 12px rgba(255,255,255,0.03)'
                 }}
-                disabled={isLoggingIn}
               >
-                {isLoggingIn ? 'Verifying...' : 'SIGN IN'}
+                {isLoggingIn
+                  ? (isCreatingUser ? 'CREATING...' : 'AUTHENTICATING...')
+                  : (isCreatingUser ? 'CREATE ADMIN USER' : 'ENTER AGENT DASHBOARD')}
               </button>
 
               <div style={{ textAlign: 'center', marginTop: '30px' }}>
@@ -739,20 +952,20 @@ export default function Dashboard() {
           }}>
             OBD OUTSMART
           </h1>
-          <div className="rounded-full border text-[9px] font-black uppercase tracking-[0.2em] hidden md:block" style={{ background: 'var(--bg-glass)', borderColor: 'var(--glass-border)', color: 'var(--accent-cyan)', padding: '4px 12px' }}>
+          <div className="rounded-full border hidden md:block" style={{ background: 'var(--bg-glass)', borderColor: 'var(--glass-border)', color: 'var(--accent-cyan)', padding: '4px 12px', fontSize: '0.688rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.2em' }}>
             Scrubber Pipeline
           </div>
         </div>
         <div className="flex items-center gap-3">
           {/* Status Indicator */}
-          <div className="flex items-center gap-2 px-4 h-11 rounded-xl bg-white-5 border border-white-10 shadow-lg transition-all hover:bg-white-10">
+          <div className="flex items-center gap-2 px-4 h-11 rounded-xl bg-white-5 border border-white-10 shadow-lg transition-all">
             <div
-              className="w-2 h-2 rounded-full animate-pulse shadow-[0_0_12px_currentColor]"
-              style={{ backgroundColor: apiColor, color: apiColor }}
+              className="animate-pulse"
+              style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: apiColor, boxShadow: `0 0 12px ${apiColor}` }}
             ></div>
-            <div className="flex flex-col items-start leading-none">
-              <span className="text-[8px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5" style={{ color: 'var(--text-main)' }}>Backend</span>
-              <span className="text-[10px] uppercase tracking-widest font-extrabold" style={{ color: apiColor }}>
+            <div className="flex flex-col items-start" style={{ lineHeight: 1 }}>
+              <span style={{ fontSize: '0.625rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.2em', opacity: 0.4, color: 'var(--text-main)', marginBottom: '2px' }}>Backend</span>
+              <span style={{ fontSize: '0.688rem', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: '800', color: apiColor }}>
                 {backendStatus}
               </span>
             </div>
@@ -763,11 +976,11 @@ export default function Dashboard() {
             onClick={() => setIsMenuOpen(!isMenuOpen)}
             className="flex items-center gap-3 px-4 h-11 rounded-2xl glass-action group shadow-lg"
           >
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-500 group-hover-rotate-90" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--accent-cyan)' }}>
+            <div className="flex items-center justify-center rounded-lg transition-all duration-500 group-hover-rotate-90" style={{ width: '32px', height: '32px', background: 'rgba(255,255,255,0.05)', color: 'var(--accent-cyan)' }}>
               <Menu size={18} />
             </div>
-            <div className="flex flex-col items-start leading-tight pr-2 text-left">
-              <span className="text-[9px] font-black uppercase tracking-[0.1em] opacity-50" style={{ color: 'var(--text-main)' }}>Menu</span>
+            <div className="flex flex-col items-start pr-2 text-left" style={{ lineHeight: 1.25 }}>
+              <span style={{ fontSize: '0.688rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5, color: 'var(--text-main)' }}>Menu</span>
             </div>
           </button>
         </div>
@@ -1005,8 +1218,14 @@ export default function Dashboard() {
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-cyan)' }}></span>
             Step 1: Data Injection
-            <span className="text-ghost ml-auto text-[10px]">Lead Base Upload</span>
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Lead Base Upload</span>
           </h2>
+          {selectedAccount && (
+            <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Active Account:</span>
+              <span style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-cyan)', textTransform: 'capitalize', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.2)' }}>{selectedAccount}</span>
+            </div>
+          )}
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <FileUploadZone onUploadSuccess={handleFileUpload} />
           </div>
@@ -1034,7 +1253,7 @@ export default function Dashboard() {
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
             Step 2: Database Analytics
-            <span className="text-ghost ml-auto text-[10px]">Global Cross-Reference</span>
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Global Cross-Reference</span>
           </h2>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', justifyContent: 'center' }}>
             {/* ROW 1: DND & SUB */}
@@ -1044,7 +1263,7 @@ export default function Dashboard() {
                   <ShieldCheck size={18} />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '9px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Global DND</span>
+                  <span style={{ fontSize: '0.688rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Global DND</span>
                   <span style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--accent-emerald)', lineHeight: 1 }}>
                     {dbStats.dnd_count === null ? '...' : dbStats.dnd_count.toLocaleString()}
                   </span>
@@ -1055,7 +1274,7 @@ export default function Dashboard() {
                   <Smartphone size={18} />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '9px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Subscriptions</span>
+                  <span style={{ fontSize: '0.688rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Subscriptions</span>
                   <span style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--accent-cyan)', lineHeight: 1 }}>
                     {dbStats.sub_count === null ? '...' : dbStats.sub_count.toLocaleString()}
                   </span>
@@ -1068,7 +1287,7 @@ export default function Dashboard() {
                 <XCircle size={18} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '9px', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Unsubscribe Archive</span>
+                <span style={{ fontSize: '0.688rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Unsubscribe Archive</span>
                 <span style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--accent-rose)', lineHeight: 1 }}>
                   {dbStats.unsub_count === null ? '...' : dbStats.unsub_count.toLocaleString()}
                 </span>
@@ -1099,25 +1318,25 @@ export default function Dashboard() {
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-purple)' }}></span>
             Step 3: Verification Intelligence
-            <span className="text-ghost ml-auto text-[10px]">Scrubbing Outcome Preview</span>
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Scrubbing Outcome Preview</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 24px' }}>
               <div className="flex flex-col">
-                <div className="stat-label" style={{ marginBottom: 2, color: 'var(--text-muted)', fontSize: '0.7rem' }}>Initial Lead Load</div>
-                <div className="text-[9px] text-slate-500 font-bold flex items-center gap-1 uppercase tracking-tight"><Info size={8} /> Total volume</div>
+                <div className="stat-label" style={{ marginBottom: 2, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Initial Lead Load</div>
+                <div style={{ fontSize: '0.688rem', color: 'var(--text-dim)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase', letterSpacing: '-0.025em' }}><Info size={10} /> Total volume</div>
               </div>
               <div className="stat-value" style={{ color: 'var(--accent-blue)', fontSize: '1.8rem', marginLeft: 'auto' }}>
-                {loading ? <span className="text-xs animate-pulse">Syncing...</span> : counts.total.toLocaleString()}
+                {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Syncing...</span> : counts.total.toLocaleString()}
               </div>
             </div>
             <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '16px 24px', borderLeft: '4px solid var(--accent-emerald)' }}>
               <div className="flex flex-col">
-                <div className="stat-label" style={{ marginBottom: 2, color: 'var(--text-muted)', fontSize: '0.7rem' }}>Verified Clean Base</div>
-                <div className="text-[9px] text-emerald-400/60 font-bold flex items-center gap-1 uppercase tracking-tight"><CheckCircle2 size={8} /> Ready</div>
+                <div className="stat-label" style={{ marginBottom: 2, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Verified Clean Base</div>
+                <div style={{ fontSize: '0.688rem', color: 'var(--accent-emerald)', opacity: 0.6, fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase', letterSpacing: '-0.025em' }}><CheckCircle2 size={10} /> Ready</div>
               </div>
               <div className="stat-value" style={{ color: 'var(--accent-emerald)', fontSize: '1.8rem', marginLeft: 'auto' }}>
-                {loading ? <span className="text-xs animate-pulse">Wait...</span> : counts.final.toLocaleString()}
+                {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Wait...</span> : counts.final.toLocaleString()}
               </div>
             </div>
           </div>
@@ -1173,7 +1392,9 @@ export default function Dashboard() {
             minHeight: '300px',
             display: 'flex',
             flexDirection: 'column',
-            margin: '0 auto 40px auto'
+            margin: '0 auto 40px auto',
+            position: 'relative',
+            overflow: 'hidden',
           }}
           variants={{
             hidden: { opacity: 0, y: 20 },
@@ -1184,21 +1405,21 @@ export default function Dashboard() {
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-blue)' }}></span>
             Step 4: Scrubber Configuration
-            <span className="text-ghost ml-auto text-[11px]">Filter Logic & Execution</span>
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Filter Logic & Execution</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:px-8">
             {Object.keys(scrubOptions).map((opt) => (
               <div key={opt} className="glass-card-interactive flex items-center gap-4 p-5 hover:bg-white-5 transition-all shadow-md"
                 onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
               >
-                <div className={`flex items-center justify-center rounded-lg border-2 ${scrubOptions[opt] ? 'bg-cyan-400 border-cyan-400' : 'bg-slate-800 border-slate-600'} transition-all`} style={{ width: '22px', height: '22px' }}>
-                  {scrubOptions[opt] && <CheckCircle2 size={14} strokeWidth={3} color="#0be881" />}
+                <div className="flex items-center justify-center rounded-lg transition-all" style={{ width: '22px', height: '22px', borderWidth: '2px', borderStyle: 'solid', borderColor: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--glass-border)', background: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--bg-glass)' }}>
+                  {scrubOptions[opt] && <CheckCircle2 size={14} strokeWidth={3} style={{ color: '#020617' }} />}
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-sm font-bold uppercase tracking-widest text-slate-200">
+                  <span style={{ fontSize: '0.813rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-main)' }}>
                     <span style={{ color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'inherit' }}>{opt}</span> FILTER
                   </span>
-                  <span className="text-xs text-slate-510 tracking-wider">
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
                     {opt === 'dnd' ? 'Remove numbers registered in National DND Registry' :
                       opt === 'sub' ? 'Remove users already subscribed to this service' :
                         opt === 'unsub' ? 'Remove users who explicitly opted out previously' :
@@ -1208,19 +1429,28 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <div className="flex flex-row flex-wrap gap-3 mt-6">
+          <div className="flex flex-row flex-wrap gap-3 mt-6" style={{ position: 'relative' }}>
             <button
               className="btn-primary glow-hover"
-              style={{ padding: '9px 16px', fontSize: '0.8rem', flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}
+              style={{ padding: '12px 16px', fontSize: '0.813rem', flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', position: 'relative' }}
               onClick={handleRunScrub}
               disabled={loading}
             >
-              <Zap size={14} fill="currentColor" />
-              {loading ? 'SCRUBBING...SYNCING...' : 'EXECUTE SCRUBBING PIPELINE'}
+              {loading ? (
+                <>
+                  <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  SCRUBBING PIPELINE...
+                </>
+              ) : (
+                <>
+                  <Zap size={14} fill="currentColor" />
+                  EXECUTE SCRUBBING PIPELINE
+                </>
+              )}
             </button>
             <button
               className="btn-secondary glow-hover"
-              style={{ padding: '10px 16px', fontSize: '0.7rem', flex: 1, minWidth: '120px', cursor: 'pointer' }}
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '120px', cursor: 'pointer' }}
               onClick={downloadCleanedBase}
               disabled={cleanedMsisdns.length === 0}
             >
@@ -1229,7 +1459,7 @@ export default function Dashboard() {
             </button>
             <button
               className="btn-secondary glow-hover"
-              style={{ padding: '10px 16px', fontSize: '0.7rem', flex: 1, minWidth: '140px', cursor: 'pointer' }}
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '140px', cursor: 'pointer' }}
               onClick={handleLogScrubEntry}
               disabled={cleanedMsisdns.length === 0}
             >
@@ -1238,7 +1468,7 @@ export default function Dashboard() {
             </button>
             <button
               className="btn-secondary glow-hover"
-              style={{ padding: '10px 16px', fontSize: '0.7rem', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'inherit', borderColor: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--glass-border)', cursor: 'pointer' }}
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'inherit', borderColor: cleanedMsisdns.length > 0 ? 'var(--accent-cyan)' : 'var(--glass-border)', cursor: 'pointer' }}
               onClick={() => setIsScheduleModalOpen(true)}
               disabled={cleanedMsisdns.length === 0}
             >
@@ -1246,6 +1476,42 @@ export default function Dashboard() {
               SCHEDULE
             </button>
           </div>
+
+          {/* SCRUBBING FULL-SECTION OVERLAY SPINNER */}
+          {loading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.6)',
+              backdropFilter: 'blur(6px)',
+              borderRadius: '32px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 50,
+              gap: '20px',
+            }}>
+              <div style={{ position: 'relative', width: '64px', height: '64px' }}>
+                <div style={{
+                  position: 'absolute', inset: 0, borderRadius: '50%',
+                  border: '3px solid rgba(34,211,238,0.15)'
+                }} />
+                <div style={{
+                  position: 'absolute', inset: 0, borderRadius: '50%',
+                  border: '3px solid transparent',
+                  borderTopColor: 'var(--accent-cyan)',
+                  borderRightColor: 'var(--accent-cyan)',
+                  animation: 'spin 0.8s linear infinite'
+                }} />
+                <Zap size={24} style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'var(--accent-cyan)' }} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '4px' }}>Scrubbing Pipeline Active</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Cross-referencing {counts.total.toLocaleString()} records...</p>
+              </div>
+            </div>
+          )}
         </motion.section>
 
         {/* STEP 5: VERIFIED RESULTS TERMINAL */}
@@ -1272,21 +1538,22 @@ export default function Dashboard() {
                 <h2 className="panel-title">
                   <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
                   Step 5: Verified Results Output
-                  <span className="text-ghost ml-auto text-[10px]">Real-time Terminal View</span>
+                  <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Real-time Terminal View</span>
                 </h2>
                 <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Live Session MSISDN Feed</span>
+                    <div className="animate-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-emerald)' }}></div>
+                    <span style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)' }}>Live Session MSISDN Feed</span>
                   </div>
                   <button
-                    className="glass-pill text-[10px] font-bold text-emerald-400 hover:bg-emerald-400 hover:text-black transition-all"
+                    className="glass-pill transition-all"
+                    style={{ fontSize: '0.688rem', fontWeight: '700', color: 'var(--accent-emerald)' }}
                     onClick={() => {
                       navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
                       alert('Copied to clipboard!');
                     }}
                   >
-                    <Copy size={12} className="inline mr-2" />
+                    <Copy size={12} style={{ display: 'inline', marginRight: '8px' }} />
                     COPY ALL TO CLIPBOARD
                   </button>
                 </div>
@@ -1320,42 +1587,204 @@ export default function Dashboard() {
           <h2 className="panel-title">
             <span className="accent-line" style={{ background: 'var(--accent-rose)' }}></span>
             Step 6: AI Campaign Studio
-            <span className="text-ghost ml-auto text-[10px]">Content & Flow Engineering</span>
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Content & Flow Engineering</span>
           </h2>
+
+          <div className="flex gap-4 mb-8">
+            <button
+              onClick={() => { setStudioMode('strategy'); setFlowError(''); }}
+              className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'strategy' ? 'bg-rose-500 text-white border-rose-400 shadow-[0_4px_25px_rgba(244,63,94,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
+            >
+              AI Strategy
+            </button>
+            <button
+              onClick={() => { setStudioMode('xml'); setFlowError(''); }}
+              className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'xml' ? 'bg-cyan-500 text-white border-cyan-400 shadow-[0_4px_25px_rgba(34,211,238,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
+            >
+              XML Blueprint
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
             <div className="flex flex-col gap-6">
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="label flex items-center gap-2"><BarChart3 size={14} /> Campaign Strategy & Script Goals</label>
-                <textarea
-                  className="input-field"
-                  rows="10"
-                  placeholder="e.g. Create a holiday promotion for prepaid users with a 20% bonus offer. Keep it high energy..."
-                  value={docText}
-                  onChange={(e) => setDocText(e.target.value)}
-                />
-                <button className="btn-primary w-full mt-6" style={{ background: 'var(--accent-rose)' }} onClick={generateFlowFromDoc} disabled={flowLoading}>
+                {studioMode === 'strategy' ? (
+                  <>
+                    <label className="label flex items-center gap-2"><BarChart3 size={14} /> Campaign Strategy & Script Goals</label>
+                    <textarea
+                      className="input-field"
+                      rows="10"
+                      placeholder="e.g. Create a holiday promotion for prepaid users with a 20% bonus offer. Keep it high energy..."
+                      value={docText}
+                      onChange={(e) => setDocText(e.target.value)}
+                    />
+                    {docText.includes('<') && docText.includes('>') && (
+                      <div className="mt-2 p-3 rounded-xl bg-amber-400/10 border border-amber-400/20 text-amber-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-2">
+                        <Info size={14} /> XML tags detected. Did you mean to use the <b>XML Blueprint</b> tab?
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <label className="label flex items-center gap-2"><Database size={14} /> XML Flow Configuration (Paste XML)</label>
+                    <textarea
+                      className="input-field font-mono text-[11px]"
+                      rows="10"
+                      style={{ lineHeight: '1.6' }}
+                      placeholder='<campaign name="Loyalty Program">
+  <node id="welcome">
+    <prompt>Hello! You have 500 reward points.</prompt>
+    <input type="dtmf">
+      <option key="1" next="redeem"/>
+      <option key="2" next="balance"/>
+    </input>
+  </node>
+</campaign>'
+                      value={xmlContent}
+                      onChange={(e) => setXmlContent(e.target.value)}
+                    />
+                  </>
+                )}
+
+                <button className="btn-primary w-full mt-6" style={{ background: 'var(--accent-rose)', boxShadow: '0 4px 20px rgba(244,63,94,0.2)' }} onClick={generateFlowFromDoc} disabled={flowLoading}>
                   <Wand2 size={18} className="mr-2 inline" />
-                  {flowLoading ? 'THINKING...' : 'GENERATE AI CAMPAIGN PROMPT'}
+                  {flowLoading ? 'ENGINEERING FLOW...' : (studioMode === 'xml' ? 'GENERATE FROM XML' : 'GENERATE AI CAMPAIGN PROMPT')}
                 </button>
                 {flowError && <div className="mt-4 p-4 rounded-xl bg-red-400/10 border border-red-400/20 text-red-400 text-xs font-bold leading-relaxed">{flowError}</div>}
               </div>
             </div>
             <div className="flex flex-col">
-              <label className="label flex items-center gap-2"><Layout size={14} /> Design Visualization</label>
-              <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '28px', border: '1px solid var(--glass-border)', padding: '32px', minHeight: '380px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {!mermaidFlow && (
-                  <div className="flex flex-col items-center gap-4 text-slate-500">
+              <div className="flex items-center justify-between mb-4">
+                <label className="label flex items-center gap-2 m-0"><Layout size={14} /> Design Visualization</label>
+                {mermaidFlow && (
+                  <button
+                    onClick={downloadFlowPdf}
+                    disabled={pdfLoading}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-[0_4px_15px_rgba(16,185,129,0.3)] disabled:opacity-50"
+                  >
+                    {pdfLoading ? <Activity size={14} className="animate-spin" /> : <Download size={14} />}
+                    {pdfLoading ? 'EXPORTING...' : 'Download PDF'}
+                  </button>
+                )}
+              </div>
+              <div style={{ background: '#020617', borderRadius: '32px', border: '1px solid #1e293b', padding: '12px', minHeight: '500px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: 'inset 0 0 40px rgba(0,0,0,0.5)' }}>
+                {(!reactFlowData.nodes || reactFlowData.nodes.length === 0) && (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-500">
                     <Activity size={48} strokeWidth={1} className="opacity-20 translate-y-2 animate-bounce" />
-                    <span className="text-xs font-bold uppercase tracking-[0.2em]">Awaiting Campaign Design...</span>
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40">Architecting Visual Flow...</span>
                   </div>
                 )}
-                {mermaidFlow && (
-                  <div className="mermaid-box w-full h-full shadow-2xl">
-                    <MermaidViewer chart={mermaidFlow} />
-                  </div>
+                {reactFlowData.nodes && reactFlowData.nodes.length > 0 && (
+                  <CampaignFlowVisualizer
+                    nodes={reactFlowData.nodes}
+                    edges={reactFlowData.edges}
+                  />
                 )}
               </div>
             </div>
+          </div>
+        </motion.section >
+
+        {/* STEP 7: VOIP COMMUNICATION CENTER */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '40px',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '200px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0 auto 40px auto'
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Smartphone size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-cyan)' }}></span>
+            Step 7: Global VOIP Dialer
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Multi-Carrier Routing (Airtel, Jio, MTN, etc.)</span>
+          </h2>
+          <div className="flex justify-center mb-6">
+            <span style={{ padding: '4px 12px', borderRadius: '9999px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)', color: 'var(--accent-emerald)', fontSize: '0.688rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              ⚡ LIVE TELECOM INTEGRATION ACTIVE
+            </span>
+          </div>
+          <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full">
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textAlign: 'center', marginBottom: '16px' }}>Trigger manual test calls or high-priority alerts directly via the integrated VOIP shortcode platform.</p>
+
+            <form onSubmit={handleVoipCall} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-2">
+                  <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Target MSISDN (Global Format)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. +91 99XXXXXXX or +234 80XXXXXXXX"
+                    value={voipMsisdn}
+                    onChange={(e) => setVoipMsisdn(e.target.value)}
+                    style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', zIndex: 10, position: 'relative' }}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Caller Shortcode</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. 5566"
+                    value={voipShortcode}
+                    onChange={(e) => setVoipShortcode(e.target.value)}
+                    style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', zIndex: 10, position: 'relative' }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Campaign Script (AI Voice)</label>
+                <textarea
+                  className="input-field min-h-[80px] py-3 text-xs"
+                  placeholder="What should the AI say to the customer?"
+                  value={voipScript}
+                  onChange={(e) => setVoipScript(e.target.value)}
+                  style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', zIndex: 10, position: 'relative' }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn-primary w-full shadow-2xl transition-all hover:scale-[1.02]"
+                style={{ background: 'linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%)', height: '54px' }}
+                disabled={voipLoading || !voipMsisdn}
+              >
+                {voipLoading ? (
+                  <Activity className="animate-spin mr-2 inline" size={18} />
+                ) : (
+                  <Zap size={18} className="mr-2 inline" />
+                )}
+                {voipLoading ? 'CONNECTING VOIP...' : 'TRIGGER VOIP CALL NOW'}
+              </button>
+            </form>
+
+            <AnimatePresence>
+              {voipResult && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className={`p-4 rounded-2xl border flex items-center gap-4 ${voipResult.success ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400' : 'bg-rose-400/10 border-rose-400/20 text-rose-400'}`}
+                >
+                  {voipResult.success ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-widest">{voipResult.success ? 'Call Initiated' : 'Call Failed'}</span>
+                    <span className="text-xs font-bold">{voipResult.message}</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </motion.section >
 
@@ -1518,6 +1947,9 @@ export default function Dashboard() {
                 <button
                   className="btn-primary !bg-emerald-500 hover:!bg-emerald-400 shadow-emerald-500/20 flex-[2] py-4 rounded-2xl font-bold tracking-widest text-xs uppercase flex items-center justify-center gap-3 transition-all active:scale-95"
                   onClick={async () => {
+                    if (isLaunching) return;
+                    setIsLaunching(true);
+                    setSuccessMsg('');
                     try {
                       // 1. Save Scheduling Details FIRST
                       const schedRes = await fetch(`${API_BASE}/schedule-promotion`, {
@@ -1529,13 +1961,11 @@ export default function Dashboard() {
                       if (!schedRes.ok) {
                         const err = await schedRes.json();
                         alert(`Scheduling Failed: ${err.detail}`);
+                        setIsLaunching(false);
                         return;
                       }
 
-                      // 2. Alert Success for Entry creation
-                      alert("Entry created successfully");
-
-                      // 3. Trigger Launch
+                      // 2. Trigger Launch
                       const launchRes = await fetch(`${API_BASE}/launch-campaign`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1547,25 +1977,110 @@ export default function Dashboard() {
 
                       if (launchRes.ok) {
                         const data = await launchRes.json();
-                        alert(`CAMPAIGN LIVE! 🚀\n${data.message}`);
-                        setIsScheduleModalOpen(false);
+                        setSuccessMsg(`CAMPAIGN LIVE! 🚀 - ${data.message}`);
+                        // Keep success message visible for a bit before closing
+                        setTimeout(() => {
+                          setIsScheduleModalOpen(false);
+                          setIsLaunching(false);
+                          setSuccessMsg('');
+                        }, 2000);
                       } else {
                         const err = await launchRes.json();
                         alert(`Launch Failed: ${err.detail}`);
+                        setIsLaunching(false);
                       }
                     } catch (err) {
                       alert(`Network Error: ${err.message}`);
+                      setIsLaunching(false);
                     }
                   }}
                 >
-                  <Zap size={16} fill="white" />
-                  Initialize & Launch Campaign
+                  <Zap size={16} fill="white" className={isLaunching ? "animate-spin" : ""} />
+                  {isLaunching ? "Launching..." : successMsg || "Initialize & Launch Campaign"}
                 </button >
               </div >
             </div >
           </div >
         )
       }
+      {/* VIRTUAL IVR SIMULATOR MODAL */}
+      <AnimatePresence>
+        {activeVirtualCall && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 100 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 100 }}
+            style={{
+              position: 'fixed',
+              bottom: '40px',
+              right: '40px',
+              width: '320px',
+              background: 'var(--bg-glass-heavy)',
+              backdropFilter: 'blur(40px)',
+              border: '2px solid var(--accent-cyan)',
+              borderRadius: '32px',
+              padding: '32px',
+              zIndex: 2000,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(34,211,238,0.2)'
+            }}
+          >
+            <div className="flex flex-col items-center gap-6">
+              <div className="relative">
+                <div className="w-20 h-20 rounded-full bg-cyan-400/20 flex items-center justify-center text-cyan-400 animate-pulse">
+                  <Phone size={40} />
+                </div>
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-400 animate-ping" />
+              </div>
+
+              <div className="text-center">
+                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Incoming Virtual Call</span>
+                <h3 className="text-xl font-bold mt-1">{activeVirtualCall.msisdn}</h3>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Shortcode: {activeVirtualCall.shortcode}</p>
+              </div>
+
+              {activeVirtualCall.status === 'ringing' ? (
+                <div className="flex gap-4 w-full">
+                  <button
+                    onClick={() => handleVirtualRespond('hangup')}
+                    className="flex-1 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 hover:bg-rose-500 hover:text-white transition-all flex items-center justify-center"
+                  >
+                    <X size={24} />
+                  </button>
+                  <button
+                    onClick={() => handleVirtualRespond('answered')}
+                    className="flex-1 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center animate-bounce"
+                  >
+                    <PhoneOutgoing size={24} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-6 w-full">
+                  <div className="p-4 rounded-2xl bg-white-5 border border-white-10 text-[11px] font-medium leading-relaxed italic text-slate-300">
+                    "{activeVirtualCall.script}"
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 w-full">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#'].map(key => (
+                      <button
+                        key={key}
+                        className="h-10 rounded-lg bg-white-5 hover:bg-cyan-400/20 transition-all font-mono text-xs text-slate-400"
+                        onClick={() => console.log(`DTMF: ${key}`)}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => handleVirtualRespond('hangup')}
+                    className="w-full h-12 rounded-xl bg-rose-500 text-white font-bold uppercase tracking-widest text-[10px]"
+                  >
+                    End Simulation
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div >
   );
 }

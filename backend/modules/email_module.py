@@ -11,7 +11,7 @@ class EmailModule:
         self.user = os.getenv("EMAIL_USER")
         self.password = os.getenv("EMAIL_PASS")
         self.host = os.getenv("EMAIL_HOST")
-        self.last_error = None
+        self.last_error: str = ""
 
     def fetch_latest_obd_request(self):
         """
@@ -26,6 +26,49 @@ class EmailModule:
                     "id": msg.uid
                 }
         return None
+
+    def fetch_csv_attachments(self, subject_filter=None, limit=1):
+        """
+        Connects to the mailbox and downloads CSV attachments.
+        If subject_filter is provided, only processes emails with that subject.
+        limit controls how many matching emails to process (default: 1 = latest only).
+        """
+        csv_data_list = []
+        try:
+            with MailBox(self.host).login(self.user, self.password) as mailbox:
+                # Build search criteria
+                criteria = AND(all=True)
+                if subject_filter:
+                    criteria = AND(subject=subject_filter)
+                
+                print(f"DEBUG: Searching emails with criteria: {criteria} (limit={limit})")
+                
+                # Fetch only the latest N emails matching criteria
+                for msg in mailbox.fetch(criteria, reverse=True, limit=limit):
+                    print(f"DEBUG: Processing email: '{msg.subject}' (UID: {msg.uid}, Attachments: {len(msg.attachments)})")
+                    
+                    # If subject_filter is provided, do a more robust partial match in Python
+                    if subject_filter and subject_filter.lower() not in msg.subject.lower():
+                        continue
+                        
+                    for att in msg.attachments:
+                        if att.filename.lower().endswith('.csv'):
+                            # Decode and parse CSV content
+                            content = att.payload.decode('utf-8', errors='ignore')
+                            csv_data_list.append({
+                                "filename": att.filename,
+                                "content": content,
+                                "subject": msg.subject,
+                                "from": msg.from_,
+                                "uid": msg.uid
+                            })
+                    # We no longer mark as seen here to allow re-processing if needed, 
+                    # but UID tracking in DB prevents duplicates.
+        except Exception as e:
+            self.last_error = f"IMAP Error: {str(e)}"
+            print(self.last_error)
+        
+        return csv_data_list
 
     def extract_obd_details(self, body):
         """
