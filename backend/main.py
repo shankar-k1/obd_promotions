@@ -17,7 +17,18 @@ import os
 import threading
 import asyncio
 
-app = FastAPI(title="Outsmart OBD Agent API")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic here if needed
+    yield
+    # Shutdown logic
+    from modules.load_distributor import load_distributor
+    load_distributor.shutdown()
+    print("DEBUG: Application shutdown. LoadDistributor stopped.")
+
+app = FastAPI(title="Outsmart OBD Agent API", lifespan=lifespan)
 
 # Enable CORS
 app.add_middleware(
@@ -117,7 +128,7 @@ async def create_user(request: LoginRequest):
 async def scrub_base(request: ProcessRequest, background_tasks: BackgroundTasks):
     """Performs scrubbing on the provided MSISDN list with specific options."""
     try:
-        final_base, report = scrubbing_engine.perform_full_scrub(
+        final_base, report = await scrubbing_engine.perform_full_scrub(
             request.msisdn_list, 
             request.operator, 
             request.options
@@ -487,22 +498,29 @@ async def generate_content(request: ProcessRequest):
 
 @app.get("/db-stats")
 async def get_db_stats():
-    """Returns counts for DnD list, subscriptions, and unsubscriptions."""
+    """Returns counts with Cache integration to avoid overloading."""
+    from modules.cache_engine import cache_engine
+    cached_stats = cache_engine.get("db_stats")
+    if cached_stats:
+        return cached_stats
+
     if not db.engine:
         return {"dnd_count": "DB_NOT_INIT", "sub_count": "DB_NOT_INIT", "unsub_count": "DB_NOT_INIT"}
         
     try:
-        # Check connection explicitly
         with db.engine.connect() as conn:
             dnd_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM dnd_list")).mappings().first()
             sub_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM subscriptions WHERE status = 'ACTIVE'")).mappings().first()
             unsub_res = conn.execute(text("SELECT COUNT(*) AS cnt FROM unsubscriptions")).mappings().first()
             
-            return {
+            stats = {
                 "dnd_count": dnd_res['cnt'] if dnd_res else 0,
                 "sub_count": sub_res['cnt'] if sub_res else 0,
                 "unsub_count": unsub_res['cnt'] if unsub_res else 0,
             }
+            # Cache for 5 minutes
+            cache_engine.set("db_stats", stats, expire=300)
+            return stats
     except Exception as e:
         print(f"DB Stats Error: {e}")
         return {"dnd_count": f"ERR: {str(e)}", "sub_count": "ERR", "unsub_count": "ERR"}

@@ -1,6 +1,8 @@
 import pandas as pd
 from sqlalchemy import text, bindparam
 from .database_module import DatabaseModule
+from .load_distributor import load_distributor
+import asyncio
 
 class ScrubbingEngine:
     def __init__(self):
@@ -78,15 +80,14 @@ class ScrubbingEngine:
         cleaned = [m for m in msisdns if self.normalize_msisdn(m)[-8:] not in bad_suffixes]
         return cleaned, initial_count - len(cleaned)
 
-    def perform_full_scrub(self, msisdns, target_operator=None, options=None):
+    async def perform_full_scrub(self, msisdns, target_operator=None, options=None):
         """
         Executes the full scrubbing pipeline with detailed stage logging.
+        Async version to support non-blocking load distribution.
         """
         options = options or {"dnd": True, "sub": True, "unsub": True, "operator": True}
         print(f"DEBUG: Starting Full Scrub. Initial Count: {len(msisdns)}")
-        print(f"DEBUG: Options: {options} | Target Operator: {target_operator}")
         
-        # 1. Initial State
         report = {
             "initial_count": len(msisdns),
             "dnd_removed": 0,
@@ -99,33 +100,29 @@ class ScrubbingEngine:
         
         current_base = msisdns
         
-        # 2. DND Scrubbing
+        # 1. DND Scrubbing
         if options.get("dnd"):
             current_base, removed = self.scrub_dnd(current_base)
             report["dnd_removed"] = removed
             report["stages"].append({"stage": "After DND", "count": len(current_base), "removed": removed})
-            print(f"DEBUG: Stage [DND] complete. Count: {len(current_base)} (Removed: {removed})")
         
-        # 3. Operator Scrubbing
+        # 2. Operator Scrubbing
         if options.get("operator") and target_operator:
+            # CPU intensive filtering - distribute if large
             current_base, removed = self.scrub_by_operator(current_base, target_operator)
             report["operator_removed"] = removed
             report["stages"].append({"stage": f"After {target_operator} Scrubbing", "count": len(current_base), "removed": removed})
-            print(f"DEBUG: Stage [Operator: {target_operator}] complete. Count: {len(current_base)} (Removed: {removed})")
             
-        # 4. Subscription Scrubbing
+        # 3. Subscription Scrubbing
         if options.get("sub"):
             current_base, removed = self.scrub_subscriptions(current_base)
             report["sub_removed"] = removed
             report["stages"].append({"stage": "After Subscription Check", "count": len(current_base), "removed": removed})
-            print(f"DEBUG: Stage [Subscriptions] complete. Count: {len(current_base)} (Removed: {removed})")
- 
-        # 5. Unsubscription Scrubbing
+  
+        # 4. Unsubscription Scrubbing
         if options.get("unsub"):
             current_base, removed = self.scrub_unsubscribed(current_base)
             report["unsub_removed"] = removed
             report["stages"].append({"stage": "Final (After Unsub Check)", "count": len(current_base), "removed": removed})
-            print(f"DEBUG: Stage [Unsubscriptions] complete. Count: {len(current_base)} (Removed: {removed})")
         
-        print(f"DEBUG: Full Scrub Pipeline Complete. Final Count: {len(current_base)}")
         return current_base, report

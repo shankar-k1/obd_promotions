@@ -375,6 +375,11 @@ class DatabaseModule:
                 
                 raw_conn.commit()
                 cursor.close()
+
+                # Invalidate stats cache since we might have new data elsewhere if needed
+                from .cache_engine import cache_engine
+                cache_engine.delete("db_stats")
+                
                 return True, table_name
         except Exception as e:
             err_msg = f"Failed to auto-save scrub results: {str(e)}"
@@ -420,33 +425,44 @@ class DatabaseModule:
         return list(expanded)
 
     def _chunked_lookup(self, msisdns, query_template, extra_params=None):
-        """Processes large MSISDN lists in batches to handle cloud DB limits."""
+        """Processes large MSISDN lists in batches with Cache integration."""
         if not msisdns:
             return []
             
-        # 1. OPTIMIZATION: Check table size first. If small, fetch all once.
+        from .cache_engine import cache_engine
+        
+        # 1. OPTIMIZATION: Check table size first. If small, fetch all once and cache it!
         import re
         table_match = re.search(r'FROM\s+(\w+)', query_template, re.IGNORECASE)
         if table_match and self.engine:
             table_name = table_match.group(1)
+            
+            # Try to get from cache first
+            cache_key = f"table_full:{table_name}:{hash(str(extra_params))}"
+            cached_data = cache_engine.get(cache_key)
+            if cached_data is not None:
+                print(f"DEBUG: Cache Hit for full table {table_name}")
+                return cached_data
+
             try:
                 with self.engine.connect() as conn:
                     # Quick count check
                     count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
-                    if count < 30000: # Threshold for fetching entire table
-                        print(f"DEBUG: Optimization - Fetching all {count} rows from {table_name}")
+                    if count < 50000: # Increased threshold for caching
+                        print(f"DEBUG: Cache Miss - Loading {count} rows from {table_name}")
                         q_str = f"SELECT msisdn FROM {table_name}"
                         if extra_params:
-                            # Basic support for simple filters like service_id and status
                             if "service_id" in extra_params:
                                 q_str += " WHERE service_id = :service_id AND status = 'ACTIVE'"
-                            # Extend as needed
                         
                         all_res = conn.execute(text(q_str), extra_params or {})
-                        # Using list comprehension for speed
-                        return [row[0] for row in all_res]
+                        res_list = [row[0] for row in all_res]
+                        
+                        # Store in cache for 10 minutes
+                        cache_engine.set(cache_key, res_list, expire=600)
+                        return res_list
             except Exception as e:
-                print(f"DEBUG: Optimization check failed for {table_name}: {e}")
+                print(f"DEBUG: Cache optimization check failed for {table_name}: {e}")
 
         # 2. DEFAULT: Standard chunked IN lookup for larger tables
         expanded = self._expand_msisdns(msisdns)
