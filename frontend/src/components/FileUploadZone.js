@@ -1,11 +1,22 @@
 import React, { useState, useCallback } from 'react';
-import { UploadCloud, CheckCircle2, FileText, AlertCircle } from 'lucide-react';
+import { UploadCloud, CheckCircle2, FileText, AlertCircle, ChevronDown, Globe } from 'lucide-react';
 
-export default function FileUploadZone({ onUploadSuccess }) {
+const ACCOUNTS = [
+  { value: 'cameroon', label: 'Cameroon', flag: '🇨🇲' },
+  { value: 'mobicom', label: 'Mobicom', flag: '🇲🇳' },
+  { value: 'unitel', label: 'Unitel', flag: '🇦🇴' },
+  { value: 'ghana', label: 'Ghana', flag: '🇬🇭' },
+  { value: 'ivorycoast', label: 'Ivory Coast', flag: '🇨🇮' },
+  { value: 'nigeria', label: 'Nigeria', flag: '🇳🇬' },
+];
+
+export default function FileUploadZone({ onUploadSuccess, apiBase }) {
     const [isDragging, setIsDragging] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [fileName, setFileName] = useState('');
     const [status, setStatus] = useState('idle'); // idle, uploading, success, error
+    const [selectedAccount, setSelectedAccount] = useState('');
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
     const handleDrag = useCallback((e) => {
         e.preventDefault();
@@ -22,30 +33,41 @@ export default function FileUploadZone({ onUploadSuccess }) {
         e.stopPropagation();
         setIsDragging(false);
 
+        if (!selectedAccount) {
+            alert('Please select an account before uploading a file.');
+            return;
+        }
+
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
             await uploadFile(files[0]);
         }
-    }, []);
+    }, [selectedAccount]);
 
     const uploadFile = async (file) => {
+        if (!selectedAccount) {
+            alert('Please select an account before uploading a file.');
+            return;
+        }
+
         setUploading(true);
         setStatus('uploading');
         setFileName(file.name);
 
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('account', selectedAccount);
 
         try {
-            const res = await fetch('http://localhost:8000/upload', {
+            const res = await fetch(`${apiBase}/upload`, {
                 method: 'POST',
                 body: formData,
             });
             if (res.ok) {
                 const data = await res.json();
+                data.account = selectedAccount;
                 setStatus('success');
                 onUploadSuccess(data);
-                // Reset to idle after 3 seconds
                 setTimeout(() => setStatus('idle'), 3000);
             } else {
                 setStatus('error');
@@ -58,15 +80,18 @@ export default function FileUploadZone({ onUploadSuccess }) {
         }
     };
 
+    const selectedAccountObj = ACCOUNTS.find(a => a.value === selectedAccount);
+
     return (
         <div
             className={`relative transition-all duration-500 p-1 rounded-[28px] group ${isDragging ? 'scale-[0.8]' : 'scale-100'
                 }`}
             style={{
                 background: isDragging
-                    ? 'linear-gradient(135deg, var(--accent-cyan), var(--accent-blue))'
+                    ? 'linear-gradient(135deg, var(--accent-emerald), var(--accent-blue))'
                     : 'transparent',
-                boxShadow: isDragging ? '0 0 40px rgba(34, 211, 238, 0.3)' : 'none'
+                boxShadow: isDragging ? '0 0 40px rgba(0, 245, 160, 0.3)' : 'none',
+                width: '100%',
             }}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -88,71 +113,242 @@ export default function FileUploadZone({ onUploadSuccess }) {
                     }}
                 />
 
-                <div className="z-10 text-center flex flex-col items-center">
+                <div className="z-10 text-center flex flex-col items-center" style={{ width: '100%', maxWidth: '400px' }}>
                     {status === 'idle' && (
                         <>
-                            <div className="mb-1 relative group-hover:scale-90 transition-transform duration-500">
-                                <UploadCloud size={22} className="text-cyan-400" strokeWidth={1.5} />
+                            {/* Account Selector Dropdown */}
+                            <div style={{ width: '100%', maxWidth: '280px', marginBottom: '20px', position: 'relative' }}>
+                                <label style={{
+                                    display: 'block',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '700',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.1em',
+                                    color: 'var(--text-dim)',
+                                    marginBottom: '8px',
+                                    textAlign: 'left'
+                                }}>
+                                    <Globe size={12} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+                                    Target Account
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setIsDropdownOpen(!isDropdownOpen); }}
+                                    className="input-field flex items-center justify-between"
+                                    style={{
+                                        border: selectedAccount ? `2px solid var(--accent-cyan)` : '1px solid var(--glass-border)',
+                                        background: 'var(--bg-glass-heavy)',
+                                        color: selectedAccount ? 'var(--text-main)' : 'var(--text-dim)',
+                                    }}
+                                >
+                                    <span className="flex items-center gap-2">
+                                        {selectedAccountObj ? (
+                                            <>
+                                                <span className="text-lg">{selectedAccountObj.flag}</span>
+                                                {selectedAccountObj.label}
+                                            </>
+                                        ) : (
+                                            'Select Protocol Target...'
+                                        )}
+                                    </span>
+                                    <ChevronDown size={14} className={`transition-transform duration-300 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                                </button>
+
+                                {isDropdownOpen && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: 0,
+                                        right: 0,
+                                        marginTop: '6px',
+                                        background: 'var(--bg-glass-heavy)',
+                                        border: '1px solid var(--glass-border)',
+                                        borderRadius: '14px',
+                                        overflow: 'hidden',
+                                        zIndex: 100,
+                                        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+                                        backdropFilter: 'blur(20px)',
+                                    }}>
+                                        {ACCOUNTS.map((acc) => (
+                                            <button
+                                                key={acc.value}
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedAccount(acc.value);
+                                                    setIsDropdownOpen(false);
+                                                }}
+                                                style={{
+                                                    width: '100%',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '10px',
+                                                    padding: '11px 16px',
+                                                    background: selectedAccount === acc.value ? 'rgba(34, 211, 238, 0.1)' : 'transparent',
+                                                    border: 'none',
+                                                    borderBottom: '1px solid var(--glass-border)',
+                                                    color: selectedAccount === acc.value ? 'var(--accent-cyan)' : 'var(--text-main)',
+                                                    fontSize: '0.813rem',
+                                                    fontWeight: selectedAccount === acc.value ? '700' : '500',
+                                                    cursor: 'pointer',
+                                                    textAlign: 'left',
+                                                    transition: 'all 0.15s ease',
+                                                }}
+                                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+                                                onMouseLeave={(e) => { e.currentTarget.style.background = selectedAccount === acc.value ? 'rgba(34,211,238,0.1)' : 'transparent'; }}
+                                            >
+                                                <span style={{ fontSize: '1.1rem' }}>{acc.flag}</span>
+                                                {acc.label}
+                                                {selectedAccount === acc.value && (
+                                                    <CheckCircle2 size={14} style={{ marginLeft: 'auto', color: 'var(--accent-cyan)' }} />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
-                            <h3 className="text-[13px] font-bold mb-0.5 tracking-tight text-white">
+                            <div className="mb-1 relative group-hover:scale-90 transition-transform duration-500">
+                                <UploadCloud size={22} style={{ color: 'var(--accent-cyan)' }} strokeWidth={1.5} />
+                            </div>
+
+                            <h3 style={{
+                                fontSize: '0.813rem',
+                                fontWeight: '700',
+                                marginBottom: '4px',
+                                letterSpacing: '-0.01em',
+                                color: 'var(--text-main)'
+                            }}>
                                 Drop your latest OBD Base
                             </h3>
-                            <p className="text-slate-400 text-[7px] mb-2 max-w-[120px] leading-tight">
-                                Upload <span className="text-cyan-400 font-mono">CSV</span> or <span className="text-cyan-400 font-mono">XLSX</span>
+                            <p style={{
+                                color: 'var(--text-dim)',
+                                fontSize: '0.75rem',
+                                marginBottom: '12px',
+                                maxWidth: '200px',
+                                lineHeight: '1.4'
+                            }}>
+                                Upload <span style={{ color: 'var(--accent-cyan)', fontFamily: 'JetBrains Mono, monospace' }}>CSV</span> or <span style={{ color: 'var(--accent-cyan)', fontFamily: 'JetBrains Mono, monospace' }}>XLSX</span>
                             </p>
 
-                            <label className="glass-button-primary group/btn relative px-12 py-3.5 rounded-2xl cursor-pointer hover:scale-[1.02] active:scale-[0.98] mt-3"
+                            <label className="btn-primary"
                                 style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
                                     width: 'fit-content',
-                                    margin: '0 auto'
+                                    margin: '0 auto',
+                                    opacity: selectedAccount ? 1 : 0.4,
+                                    pointerEvents: selectedAccount ? 'auto' : 'none',
+                                    padding: '12px 32px'
                                 }}>
-                                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover/btn:opacity-100 transition-opacity rounded-2xl" />
-                                <span className="relative z-10 flex items-center justify-center gap-3 font-bold uppercase tracking-widest text-[11px] text-white">
-                                    <FileText size={18} className="transition-transform group-hover/btn:rotate-6" />
+                                <span className="flex items-center justify-center gap-3 font-black uppercase tracking-[0.2em] text-[10px]">
+                                    <FileText size={16} />
                                     Choose Data Source
                                 </span>
-                                <input type="file" style={{ display: 'none' }} onChange={(e) => uploadFile(e.target.files[0])} />
+                                <input type="file" style={{ display: 'none' }} onChange={(e) => {
+                                    if (e.target.files[0]) uploadFile(e.target.files[0]);
+                                }} />
                             </label>
+                            {!selectedAccount && (
+                                <p style={{
+                                    color: 'var(--accent-amber, #f59e0b)',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '600',
+                                    marginTop: '12px'
+                                }}>
+                                    ⚠ Select an account first
+                                </p>
+                            )}
                         </>
                     )}
 
                     {status === 'uploading' && (
                         <div className="flex flex-col items-center py-10">
                             <div className="relative mb-8">
-                                <div className="w-20 h-20 rounded-full border-2 border-cyan-400/20" />
-                                <div className="absolute inset-0 w-20 h-20 rounded-full border-t-2 border-cyan-400 animate-spin" />
-                                <UploadCloud className="absolute inset-0 m-auto text-cyan-400 animate-pulse" size={30} />
+                                <div style={{
+                                    width: '80px', height: '80px', borderRadius: '50%',
+                                    border: '2px solid rgba(34, 211, 238, 0.2)'
+                                }} />
+                                <div className="absolute inset-0 animate-spin" style={{
+                                    width: '80px', height: '80px', borderRadius: '50%',
+                                    borderTop: '2px solid var(--accent-cyan)',
+                                    borderRight: '2px solid transparent',
+                                    borderBottom: '2px solid transparent',
+                                    borderLeft: '2px solid transparent',
+                                }} />
+                                <UploadCloud className="absolute inset-0 m-auto animate-pulse" size={30} style={{ color: 'var(--accent-cyan)' }} />
                             </div>
-                            <span className="text-cyan-400 font-bold tracking-widest uppercase text-xs animate-pulse">
+                            <span style={{
+                                color: 'var(--accent-cyan)',
+                                fontWeight: '700',
+                                letterSpacing: '0.1em',
+                                textTransform: 'uppercase',
+                                fontSize: '0.75rem',
+                            }} className="animate-pulse">
                                 Injecting Data Source
                             </span>
-                            <span className="text-slate-500 text-[10px] mt-2 font-mono">{fileName}</span>
+                            <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem', marginTop: '8px', fontFamily: 'JetBrains Mono, monospace' }}>
+                                {fileName}
+                            </span>
+                            {selectedAccountObj && (
+                                <span style={{
+                                    marginTop: '6px',
+                                    fontSize: '0.75rem',
+                                    color: 'var(--accent-emerald)',
+                                    fontWeight: '600'
+                                }}>
+                                    {selectedAccountObj.flag} {selectedAccountObj.label}
+                                </span>
+                            )}
                         </div>
                     )}
 
                     {status === 'success' && (
                         <div className="flex flex-col items-center py-6 scale-in">
-                            <div className="mb-4 p-4 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                                <CheckCircle2 size={32} className="text-emerald-400" />
+                            <div style={{
+                                marginBottom: '16px', padding: '16px', borderRadius: '50%',
+                                background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)'
+                            }}>
+                                <CheckCircle2 size={32} style={{ color: 'var(--accent-emerald)' }} />
                             </div>
-                            <h3 className="text-lg font-bold text-emerald-400 mb-1">Data Uploaded Successful</h3>
-                            <p className="text-slate-400 text-sm">Target dataset compiled & indexed</p>
+                            <h3 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--accent-emerald)', marginBottom: '4px' }}>Data Uploaded Successfully</h3>
+                            <p style={{ color: 'var(--text-dim)', fontSize: '0.813rem' }}>Target dataset compiled & indexed</p>
+                            {selectedAccountObj && (
+                                <span style={{
+                                    marginTop: '8px',
+                                    padding: '4px 12px',
+                                    borderRadius: '20px',
+                                    background: 'rgba(16, 185, 129, 0.1)',
+                                    border: '1px solid rgba(16, 185, 129, 0.2)',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '600',
+                                    color: 'var(--accent-emerald)'
+                                }}>
+                                    {selectedAccountObj.flag} {selectedAccountObj.label}
+                                </span>
+                            )}
                         </div>
                     )}
 
                     {status === 'error' && (
                         <div className="flex flex-col items-center py-6 scale-in">
-                            <div className="mb-4 p-4 rounded-full bg-rose-500/10 border border-rose-500/20">
-                                <AlertCircle size={32} className="text-rose-400" />
+                            <div style={{
+                                marginBottom: '16px', padding: '16px', borderRadius: '50%',
+                                background: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.2)'
+                            }}>
+                                <AlertCircle size={32} style={{ color: 'var(--accent-rose)' }} />
                             </div>
-                            <h3 className="text-lg font-bold text-rose-400 mb-1">Upload Failed</h3>
+                            <h3 style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--accent-rose)', marginBottom: '4px' }}>Upload Failed</h3>
                             <button
                                 onClick={() => setStatus('idle')}
-                                className="text-slate-400 text-xs hover:text-white underline underline-offset-4 mt-2"
+                                style={{
+                                    color: 'var(--text-dim)',
+                                    fontSize: '0.75rem',
+                                    textDecoration: 'underline',
+                                    textUnderlineOffset: '4px',
+                                    marginTop: '8px',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer'
+                                }}
                             >
                                 Try again
                             </button>
@@ -165,23 +361,13 @@ export default function FileUploadZone({ onUploadSuccess }) {
             {
                 isDragging && (
                     <div className="absolute inset-4 overflow-hidden rounded-[24px] pointer-events-none">
-                        <div className="w-full h-[2px] bg-cyan-400 shadow-[0_0_15px_var(--accent-cyan)] animate-scan absolute top-0" />
+                        <div className="w-full h-[2px] animate-scan absolute top-0" style={{
+                            background: 'var(--accent-cyan)',
+                            boxShadow: '0 0 15px var(--accent-cyan)'
+                        }} />
                     </div>
                 )
             }
         </div >
     );
 }
-
-// Add these styles to your globals.css if possible, or keep as inline if necessary.
-// @keyframes scan {
-//   0% { top: 0%; }
-//   100% { top: 100%; }
-// }
-// .scale-in {
-//   animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-// }
-// @keyframes scaleIn {
-//   from { transform: scale(0.9); opacity: 0; }
-//   to { transform: scale(1); opacity: 1; }
-// }

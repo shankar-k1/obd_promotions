@@ -10,11 +10,14 @@
   },
   "dependencies": {
     "framer-motion": "^12.34.2",
+    "lodash": "^4.17.23",
     "lucide-react": "^0.574.0",
     "mermaid": "^11.12.3",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "reactflow": "^11.11.4",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "eslint": "^9",
