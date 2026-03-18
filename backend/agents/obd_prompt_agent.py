@@ -69,6 +69,38 @@ class OBDPromptAgent:
         result = self._generate(prompt)
         return self._clean_json(result)
 
+    def generate_scp_flow_json(self, doc_text):
+        """Generates a specialized SCP IVR flow JSON for the interactive builder."""
+        SYSTEM = """You are an expert BnG SCP IVR flow designer. Given an IVR flow description, extract all nodes and connections and return ONLY valid JSON — no markdown, no explanation, no code blocks.
+
+Node types MUST be one of: Start, Navigation, Play, Database, URL, Processing, Exit, DigitCollect, StartRecord, Transfer
+Edge types MUST be one of: DTMF, DB, Normal
+- DTMF = key press routing (label = digit pressed: "1","2","Any","NoInput","#")
+- DB = database result routing (label = result value: "active","new","grace","parking")
+- Normal = unconditional flow (label = "")
+
+Layout rules:
+- Start node at x:400 y:50
+- Each layer ~200px below the previous
+- Sibling nodes spread ~280px apart horizontally
+- Every node must have unique short id (letters/numbers only, no spaces)
+
+Return ONLY this JSON structure, nothing else:
+{
+  "flowName": "ServiceName",
+  "nodes": [
+    {"id":"start","type":"Start","label":"ServiceName","x":400,"y":50,"params":{"calltype":"IVR","service":"ServiceName","shortcode":"","defaultlang":"_E"}},
+    {"id":"lang","type":"Navigation","label":"Language_Selection","x":400,"y":250,"params":{"promptfile":"/IVR/lang.wav","timeout":"5","repeatcount":"1","bargein":"true"}}
+  ],
+  "edges": [
+    {"id":"e1","source":"start","target":"lang","type":"Normal","label":""},
+    {"id":"e2","source":"lang","target":"menu","type":"DTMF","label":"1"}
+  ]
+}"""
+        prompt = f"{SYSTEM}\n\nDESCRIPTION:\n{doc_text}"
+        result = self._generate(prompt)
+        return self._clean_json(result)
+
     def generate_flow_json_from_xml(self, xml_content):
         """Analyzes technical XML (full or fragments) and returns a JSON structure."""
         print(f"DEBUG XML: Analyzing XML input (Length: {len(xml_content)} chars)")

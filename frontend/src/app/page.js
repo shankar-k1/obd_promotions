@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import PerformanceReport from '@/components/PerformanceReport';
 import MermaidViewer from '@/components/MermaidViewer';
 import FileUploadZone from '@/components/FileUploadZone';
+import SCPFlowDiagram from '@/components/SCPFlowDiagram';
 import { motion, AnimatePresence } from 'framer-motion';
 import CampaignFlowVisualizer from './components/CampaignFlowVisualizer';
 import {
@@ -36,7 +37,14 @@ import {
   Phone,
   PhoneOutgoing,
   Globe,
-  Mic
+  Mic,
+  Clock,
+  Server,
+  Hash,
+  Repeat,
+  Star,
+  AlertTriangle,
+  Layers
 } from 'lucide-react';
 const getApiBase = () => {
   if (typeof window === 'undefined') return 'http://localhost:8000';
@@ -90,7 +98,23 @@ export default function Dashboard() {
     obd_name: '',
     flow_name: '',
     msc_ip: '',
-    cli: ''
+    cli: '',
+    service_id: '',
+    jobname: '',
+    start_date: '',
+    end_date: '',
+    start_time: '',
+    end_time: '',
+    priority: '1',
+    status: 'Active',
+    blackout_hours: '0',
+    max_retry: '1',
+    remaining_retry: '1',
+    starcopy: '0',
+    recorddedication: '1',
+    server_ip: '',
+    max_obd_count: '',
+    daywise: '0'
   });
 
   // VOIP State
@@ -291,7 +315,7 @@ export default function Dashboard() {
           scrubbed: job.final_count || 0,
           final: job.final_count || 0
         }));
-        
+
         // Fetch the actual results to show in terminal
         if (job.results_table) {
           try {
@@ -306,11 +330,11 @@ export default function Dashboard() {
             console.error("Failed to fetch scrub results content", e);
           }
         }
-      } else if (job.status === 'FAILED') {
-        setActiveJobId(null);
       }
+      return data.job;
     } catch (err) {
       console.error('Failed to poll job status', err);
+      return null;
     }
   };
 
@@ -369,9 +393,8 @@ export default function Dashboard() {
             clearInterval(pollInterval);
             return;
           }
-          await pollJobStatus(data.job_id);
-          const job = scrubJobs.find(j => j.id === data.job_id);
-          if (job && (job.status === 'COMPLETED' || job.status === 'FAILED')) {
+          const updatedJob = await pollJobStatus(data.job_id);
+          if (updatedJob && (updatedJob.status === 'COMPLETED' || updatedJob.status === 'FAILED')) {
             clearInterval(pollInterval);
           }
         }, 3000);
@@ -1146,10 +1169,10 @@ export default function Dashboard() {
             />
             <ModuleCard
               icon={<Users size={24} strokeWidth={1.5} />}
-              title="Access Control"
-              desc="Manage global administrative privileges and deep security hierarchy."
+              title="Flow Diagram"
+              desc="SCP IVR flow visualization with deep node inspection & parameter extraction."
               accent="var(--accent-emerald)"
-              disabled
+              onClick={() => setCurrentView('flowdiagram')}
             />
             <ModuleCard
               icon={<Settings size={24} strokeWidth={1.5} />}
@@ -1160,6 +1183,154 @@ export default function Dashboard() {
             />
           </div>
         </motion.div>
+      </div>
+    );
+  }
+
+  if (currentView === 'flowdiagram') {
+    return (
+      <div className="dashboard-container relative" data-theme={theme} style={{ padding: 0 }}>
+        {/* Top App Bar */}
+        <div
+          className="sticky top-0 z-[60] w-full"
+          style={{
+            background: 'transparent',
+            backdropFilter: 'blur(30px)',
+            borderBottom: '1px solid var(--glass-border)',
+            width: '100%',
+          }}
+        >
+          <div className="flex items-center justify-between w-full px-10 py-5">
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-6">
+                <button
+                  onClick={() => setIsMenuOpen(v => !v)}
+                  className="w-14 h-14 rounded-3xl glass-action flex items-center justify-center hover:scale-110 transition-all shadow-2xl relative group overflow-hidden"
+                  style={{ background: 'var(--accent-cyan)', border: '2px solid rgba(255,255,255,0.2)' }}
+                  aria-label="Open menu"
+                  title="System Menu"
+                >
+                  <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-10 transition-opacity" />
+                  <Menu size={24} className="text-black" strokeWidth={2.5} />
+                </button>
+
+                <div className="flex flex-col leading-none">
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Outsmart OBD</span>
+                  <span className="text-[16px] font-black uppercase tracking-wider">IVR Flow Diagram</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-10">
+              <div className="flex items-center gap-8">
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] font-black uppercase tracking-widest opacity-40">Backend:</span>
+                  <span className="text-[12px] font-black uppercase tracking-widest transition-colors duration-500" style={{
+                    color: backendStatus === 'Connected' ? '#00f5a0' : 'var(--accent-rose)',
+                    textShadow: backendStatus === 'Connected' ? '0 0 10px rgba(0, 245, 160, 0.4)' : '0 0 10px rgba(244, 63, 94, 0.4)'
+                  }}>{backendStatus === 'Connected' ? 'CONNECTED' : 'DISCONNECTED'}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={toggleTheme}
+                  className="w-11 h-11 rounded-2xl glass-action flex items-center justify-center hover:scale-105 transition-all"
+                  style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
+                  aria-label="Toggle theme"
+                  title="Toggle theme"
+                >
+                  <Palette size={18} />
+                </button>
+
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-4 px-7 h-11 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500 font-extrabold tracking-[0.2em] text-[11px] uppercase hover:bg-rose-500 hover:text-white transition-all duration-300 shadow-xl"
+                >
+                  <LogOut size={16} /> LOGOUT
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sidebar Navigation */}
+        <AnimatePresence>
+          {isMenuOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsMenuOpen(false)}
+                className="fixed inset-0 z-40"
+                style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)' }}
+              />
+              <motion.div
+                initial={{ x: -400 }}
+                animate={{ x: 0 }}
+                exit={{ x: -400 }}
+                className="fixed top-0 left-0 h-full z-50 glass-panel"
+                style={{
+                  width: 'min(340px, 88vw)',
+                  borderRadius: '0 32px 32px 0',
+                  padding: '48px 0',
+                  borderLeft: 'none'
+                }}
+              >
+                <div className="px-12 mb-16 flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400 mb-2">Command Center</span>
+                    <h2 className="text-2xl font-black tracking-wider uppercase">System Menu</h2>
+                  </div>
+                  <button onClick={() => setIsMenuOpen(false)} className="w-12 h-12 rounded-2xl bg-white-5 flex items-center justify-center hover:bg-white-10 text-white-40 transition-all">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="flex flex-col gap-4 px-4">
+                  <MenuOption icon={<Layout size={28} />} title="Modules Hub" desc="Switch system modules" color="var(--accent-cyan)" onClick={() => { setCurrentView('landing'); setIsMenuOpen(false); }} />
+                  <MenuOption icon={<Database size={28} />} title="Scrubber" desc="MSISDN sanitation engine" color="var(--accent-blue)" onClick={() => { setCurrentView('dashboard'); setIsMenuOpen(false); }} />
+                  <MenuOption icon={<Users size={28} />} title="Flow Diagram" desc="SCP IVR flow visualizer" color="var(--accent-emerald)" onClick={() => { setCurrentView('flowdiagram'); setIsMenuOpen(false); }} />
+                  <MenuOption icon={<History size={28} />} title="Scrub History" desc="View past execution logs" color="var(--accent-purple)" onClick={() => { setIsHistoryModalOpen(true); setIsMenuOpen(false); }} />
+                </div>
+
+                <div className="mt-auto px-8 py-8 border-t border-white-5">
+                  <button
+                    onClick={() => {
+                      handleLogout();
+                      setIsMenuOpen(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '16px',
+                      borderRadius: '20px',
+                      background: 'rgba(244, 63, 94, 0.1)',
+                      color: 'var(--accent-rose)',
+                      border: '1px solid rgba(244, 63, 94, 0.2)',
+                      fontSize: '0.75rem',
+                      fontWeight: '800',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.2em',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '12px',
+                      transition: 'all 0.3s'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.2)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.1)'}
+                  >
+                    <LogOut size={16} /> LOGOUT
+                  </button>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Flow Diagram Content */}
+        <SCPFlowDiagram />
       </div>
     );
   }
@@ -1237,913 +1408,1138 @@ export default function Dashboard() {
         </div>
       </div>
 
-        {/* Sidebar Navigation */}
-        <AnimatePresence>
-          {isMenuOpen && (
-            <>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setIsMenuOpen(false)}
-                className="fixed inset-0 z-40"
-                style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)' }}
-              />
-              <motion.div
-                initial={{ x: -400 }}
-                animate={{ x: 0 }}
-                exit={{ x: -400 }}
-                className="fixed top-0 left-0 h-full z-50 glass-panel"
-                style={{
-                  width: 'min(340px, 88vw)',
-                  borderRadius: '0 32px 32px 0',
-                  padding: '48px 0',
-                  borderLeft: 'none'
-                }}
-              >
-                <div className="px-12 mb-16 flex justify-between items-center">
+      {/* Sidebar Navigation */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMenuOpen(false)}
+              className="fixed inset-0 z-40"
+              style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)' }}
+            />
+            <motion.div
+              initial={{ x: -400 }}
+              animate={{ x: 0 }}
+              exit={{ x: -400 }}
+              className="fixed top-0 left-0 h-full z-50 glass-panel"
+              style={{
+                width: 'min(340px, 88vw)',
+                borderRadius: '0 32px 32px 0',
+                padding: '48px 0',
+                borderLeft: 'none'
+              }}
+            >
+              <div className="px-12 mb-16 flex justify-between items-center">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400 mb-2">Command Center</span>
+                  <h2 className="text-2xl font-black tracking-wider uppercase">System Menu</h2>
+                </div>
+                <button onClick={() => setIsMenuOpen(false)} className="w-12 h-12 rounded-2xl bg-white-5 flex items-center justify-center hover:bg-white-10 text-white-40 transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="flex flex-col gap-4 px-4">
+                <MenuOption icon={<Layout size={28} />} title="Modules Hub" desc="Switch system modules" color="var(--accent-cyan)" onClick={() => setCurrentView('landing')} />
+                <MenuOption icon={<History size={28} />} title="Scrub History" desc="View past execution logs" color="var(--accent-emerald)" onClick={() => setIsHistoryModalOpen(true)} />
+                <MenuOption icon={<Database size={28} />} title="Database Engine" desc="Manage clean records" color="var(--accent-blue)" onClick={() => { }} />
+                <MenuOption icon={<Activity size={28} />} title="System Activity" desc="Real-time performance" color="var(--accent-purple)" onClick={() => { }} />
+              </div>
+
+              {/* DESIGN STUDIO */}
+              <div className="mt-4 px-8 pt-8 border-t border-white-5">
+                <span className="text-[10px] font-black uppercase tracking-[0.3em] block mb-6" style={{ color: 'var(--accent-cyan)' }}>Design Studio</span>
+                <div className="grid grid-cols-2 gap-4 pb-8">
+                  {themes.map((t) => (
+                    <motion.button
+                      key={t}
+                      whileHover={{ y: -4, scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        setTheme(t);
+                        localStorage.setItem('obd-theme', t);
+                        document.documentElement.setAttribute('data-theme', t);
+                      }}
+                      className={`group flex flex-col items-center justify-center p-4 rounded-3xl border transition-all duration-500 overflow-hidden relative ${theme === t
+                        ? 'border-emerald-400 bg-emerald-400/5 shadow-[0_0_30px_rgba(34,211,238,0.15)]'
+                        : 'border-white-5 bg-white-5 hover:border-white-20'
+                        }`}
+                    >
+                      {/* THEME SWATCH */}
+                      <div className="w-12 h-12 rounded-2xl mb-3 flex items-center justify-center relative overflow-hidden shadow-2xl border border-white-10 group-hover:rotate-6 transition-transform">
+                        <div className="absolute inset-0" style={{
+                          background: t === 'dark' ? 'linear-gradient(135deg, #020617 0%, #172554 100%)' :
+                            t === 'light' ? 'linear-gradient(135deg, #fff 0%, #dbeafe 100%)' :
+                              t === 'midnight' ? 'linear-gradient(135deg, #050510 0%, #312e81 100%)' :
+                                'linear-gradient(135deg, #1a1a61ff 0%, #4c1d95 100%)'
+                        }} />
+
+                        {/* Accent preview dots */}
+                        <div className="relative z-10 flex gap-1">
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ background: t === 'midnight' ? '#818cf8' : 'var(--accent-cyan)' }} />
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ background: t === 'midnight' ? '#c084fc' : 'var(--accent-blue)' }} />
+                        </div>
+
+                        {theme === t && (
+                          <motion.div
+                            layoutId="active-indicator"
+                            className="absolute inset-0 border-2 border-emerald-400 z-20 rounded-2xl"
+                          />
+                        )}
+                      </div>
+
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: 'var(--text-main)' }}>{t}</span>
+                        {theme === t && (
+                          <span className="text-[7px] font-bold text-emerald-400 uppercase tracking-tighter">Active</span>
+                        )}
+                      </div>
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-auto px-8 py-8 border-t border-white-5">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="relative">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center text-emerald-400 font-black text-sm">AD</div>
+                    <div className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 animate-pulse" />
+                  </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase tracking-[0.4em] text-emerald-400 mb-2">Command Center</span>
-                    <h2 className="text-2xl font-black tracking-wider uppercase">System Menu</h2>
-                  </div>
-                  <button onClick={() => setIsMenuOpen(false)} className="w-12 h-12 rounded-2xl bg-white-5 flex items-center justify-center hover:bg-white-10 text-white-40 transition-all">
-                    <X size={20} />
-                  </button>
-                </div>
-                <div className="flex flex-col gap-4 px-4">
-                  <MenuOption icon={<Layout size={28} />} title="Modules Hub" desc="Switch system modules" color="var(--accent-cyan)" onClick={() => setCurrentView('landing')} />
-                  <MenuOption icon={<History size={28} />} title="Scrub History" desc="View past execution logs" color="var(--accent-emerald)" onClick={() => setIsHistoryModalOpen(true)} />
-                  <MenuOption icon={<Database size={28} />} title="Database Engine" desc="Manage clean records" color="var(--accent-blue)" onClick={() => { }} />
-                  <MenuOption icon={<Activity size={28} />} title="System Activity" desc="Real-time performance" color="var(--accent-purple)" onClick={() => { }} />
-                </div>
-
-                {/* DESIGN STUDIO */}
-                <div className="mt-4 px-8 pt-8 border-t border-white-5">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] block mb-6" style={{ color: 'var(--accent-cyan)' }}>Design Studio</span>
-                  <div className="grid grid-cols-2 gap-4 pb-8">
-                    {themes.map((t) => (
-                      <motion.button
-                        key={t}
-                        whileHover={{ y: -4, scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => {
-                          setTheme(t);
-                          localStorage.setItem('obd-theme', t);
-                          document.documentElement.setAttribute('data-theme', t);
-                        }}
-                        className={`group flex flex-col items-center justify-center p-4 rounded-3xl border transition-all duration-500 overflow-hidden relative ${theme === t
-                          ? 'border-emerald-400 bg-emerald-400/5 shadow-[0_0_30px_rgba(34,211,238,0.15)]'
-                          : 'border-white-5 bg-white-5 hover:border-white-20'
-                          }`}
-                      >
-                        {/* THEME SWATCH */}
-                        <div className="w-12 h-12 rounded-2xl mb-3 flex items-center justify-center relative overflow-hidden shadow-2xl border border-white-10 group-hover:rotate-6 transition-transform">
-                          <div className="absolute inset-0" style={{
-                            background: t === 'dark' ? 'linear-gradient(135deg, #020617 0%, #172554 100%)' :
-                              t === 'light' ? 'linear-gradient(135deg, #fff 0%, #dbeafe 100%)' :
-                                t === 'midnight' ? 'linear-gradient(135deg, #050510 0%, #312e81 100%)' :
-                                  'linear-gradient(135deg, #1a1a61ff 0%, #4c1d95 100%)'
-                          }} />
-
-                          {/* Accent preview dots */}
-                          <div className="relative z-10 flex gap-1">
-                            <div className="w-1.5 h-1.5 rounded-full" style={{ background: t === 'midnight' ? '#818cf8' : 'var(--accent-cyan)' }} />
-                            <div className="w-1.5 h-1.5 rounded-full" style={{ background: t === 'midnight' ? '#c084fc' : 'var(--accent-blue)' }} />
-                          </div>
-
-                          {theme === t && (
-                            <motion.div
-                              layoutId="active-indicator"
-                              className="absolute inset-0 border-2 border-emerald-400 z-20 rounded-2xl"
-                            />
-                          )}
-                        </div>
-
-                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-[9px] font-black uppercase tracking-widest" style={{ color: 'var(--text-main)' }}>{t}</span>
-                          {theme === t && (
-                            <span className="text-[7px] font-bold text-emerald-400 uppercase tracking-tighter">Active</span>
-                          )}
-                        </div>
-                      </motion.button>
-                    ))}
+                    <span className="text-xs font-black text-white uppercase tracking-widest">Admin User</span>
+                    <span className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-tighter">System Online</span>
                   </div>
                 </div>
-
-                <div className="mt-auto px-8 py-8 border-t border-white-5">
-                  <div className="flex items-center gap-4 mb-6">
-                    <div className="relative">
-                      <div className="w-10 h-10 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center text-emerald-400 font-black text-sm">AD</div>
-                      <div className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 animate-pulse" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-black text-white uppercase tracking-widest">Admin User</span>
-                      <span className="text-[10px] text-emerald-500/80 font-bold uppercase tracking-tighter">System Online</span>
-                    </div>
-                  </div>
-                  <div className="flex justify-between items-center opacity-40 mb-6">
-                    <span className="text-[9px] font-bold uppercase tracking-[0.2em]">OBD OUTSMART v2.0</span>
-                    <span className="text-[9px] font-bold uppercase tracking-tighter">© 2026 PR</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      handleLogout();
-                      setIsMenuOpen(false);
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '16px',
-                      borderRadius: '20px',
-                      background: 'rgba(244, 63, 94, 0.1)',
-                      color: 'var(--accent-rose)',
-                      border: '1px solid rgba(244, 63, 94, 0.2)',
-                      fontSize: '0.75rem',
-                      fontWeight: '800',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.2em',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '12px',
-                      transition: 'all 0.3s'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.2)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.1)'}
-                  >
-                    <LogOut size={16} /> LOGOUT
-                  </button>
+                <div className="flex justify-between items-center opacity-40 mb-6">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.2em]">OBD OUTSMART v2.0</span>
+                  <span className="text-[9px] font-bold uppercase tracking-tighter">© 2026 PR</span>
                 </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    setIsMenuOpen(false);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    borderRadius: '20px',
+                    background: 'rgba(244, 63, 94, 0.1)',
+                    color: 'var(--accent-rose)',
+                    border: '1px solid rgba(244, 63, 94, 0.2)',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.2em',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px',
+                    transition: 'all 0.3s'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.2)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(244, 63, 94, 0.1)'}
+                >
+                  <LogOut size={16} /> LOGOUT
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
-        <motion.div
-          key="dashboard-flow"
-          className="sequential-flow-container p-6"
-          initial="hidden"
-          animate="visible"
-          variants={{
-            hidden: { opacity: 0 },
-            visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
-          }}
+      <motion.div
+        key="dashboard-flow"
+        className="sequential-flow-container p-6"
+        initial="hidden"
+        animate="visible"
+        variants={{
+          hidden: { opacity: 0 },
+          visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
+        }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: '2rem',
+          width: '100%',
+          maxWidth: '1600px',
+          margin: '0 auto',
+          paddingTop: '40px'
+        }}
+      >
+        {/* STEP 1: DATA INJECTION */}
+        <motion.section
+          className="glass-panel sequential-step"
           style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '2rem',
+            padding: '20px 24px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
+            border: '1px solid var(--glass-border)',
             width: '100%',
-            maxWidth: '1600px',
-            margin: '0 auto',
-            paddingTop: '40px'
+            minHeight: '220px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0',
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
           }}
         >
-          {/* STEP 1: DATA INJECTION */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '20px 24px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '220px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0',
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><UploadCloud size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
-              Step 1: Data Injection
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.74rem' }}>Lead Base Upload</span>
-            </h2>
-            {selectedAccount && (
-              <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Active Account:</span>
-                <span style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-emerald)', textTransform: 'capitalize', padding: '4px 12px', borderRadius: '20px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>{selectedAccount}</span>
-              </div>
-            )}
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <FileUploadZone onUploadSuccess={handleFileUpload} apiBase={API_BASE} />
+          <div className="step-badge"><UploadCloud size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
+            Step 1: Data Injection
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.74rem' }}>Lead Base Upload</span>
+          </h2>
+          {selectedAccount && (
+            <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Active Account:</span>
+              <span style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-emerald)', textTransform: 'capitalize', padding: '4px 12px', borderRadius: '20px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>{selectedAccount}</span>
             </div>
-          </motion.section>
+          )}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FileUploadZone onUploadSuccess={handleFileUpload} apiBase={API_BASE} />
+          </div>
+        </motion.section>
 
-          {/* STEP 2: DATABASE ANALYTICS */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '20px 24px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '220px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0',
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><Database size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
-              Step 2: Database Analytics
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Global Cross-Reference</span>
-            </h2>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', justifyContent: 'center' }}>
-              {/* ROW 1: DND, SUB, UNSUB */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-                <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-emerald)' }}>
-                  <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-emerald)', display: 'flex' }}>
-                    <ShieldCheck size={20} />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Global DND</span>
-                    <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
-                      {dbStats.dnd_count === null ? '...' : dbStats.dnd_count.toLocaleString()}
-                    </span>
-                  </div>
+        {/* STEP 2: DATABASE ANALYTICS */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '20px 24px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '220px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0',
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Database size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
+            Step 2: Database Analytics
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Global Cross-Reference</span>
+          </h2>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', justifyContent: 'center' }}>
+            {/* ROW 1: DND, SUB, UNSUB */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+              <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-emerald)' }}>
+                <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-emerald)', display: 'flex' }}>
+                  <ShieldCheck size={20} />
                 </div>
-                <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-cyan)' }}>
-                  <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(34, 211, 238, 0.1)', color: 'var(--accent-cyan)', display: 'flex' }}>
-                    <Smartphone size={20} />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Subscriptions</span>
-                    <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
-                      {dbStats.sub_count === null ? '...' : dbStats.sub_count.toLocaleString()}
-                    </span>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Global DND</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
+                    {dbStats.dnd_count === null ? '...' : dbStats.dnd_count.toLocaleString()}
+                  </span>
                 </div>
-                <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-rose)' }}>
-                  <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(244, 63, 92, 0.1)', color: 'var(--accent-rose)', display: 'flex' }}>
-                    <XCircle size={20} />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Unsub Archive</span>
-                    <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
-                      {dbStats.unsub_count === null ? '...' : dbStats.unsub_count.toLocaleString()}
-                    </span>
-                  </div>
+              </div>
+              <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-cyan)' }}>
+                <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(34, 211, 238, 0.1)', color: 'var(--accent-cyan)', display: 'flex' }}>
+                  <Smartphone size={20} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Subscriptions</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
+                    {dbStats.sub_count === null ? '...' : dbStats.sub_count.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+              <div className="stat-card group" style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '16px 20px', borderRadius: '20px', borderLeft: '4px solid var(--accent-rose)' }}>
+                <div style={{ padding: '10px', borderRadius: '12px', background: 'rgba(244, 63, 92, 0.1)', color: 'var(--accent-rose)', display: 'flex' }}>
+                  <XCircle size={20} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>Unsub Archive</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: '950', color: 'var(--text-main)', lineHeight: 1 }}>
+                    {dbStats.unsub_count === null ? '...' : dbStats.unsub_count.toLocaleString()}
+                  </span>
                 </div>
               </div>
             </div>
-          </motion.section>
+          </div>
+        </motion.section>
 
-          {/* STEP 3: VERIFICATION INTELLIGENCE */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '20px 24px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '220px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0',
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><ShieldCheck size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-purple)' }}></span>
-              Step 3: Verification Intelligence
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Scrubbing Outcome Preview</span>
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '12px 20px' }}>
-                <div className="flex flex-col">
-                  <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.6rem' }}>Initial Lead Load</div>
-                  <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase' }}><Info size={10} /> Total volume</div>
-                </div>
-                <div className="stat-value" style={{ color: 'var(--accent-blue)', fontSize: '1.4rem', marginLeft: 'auto' }}>
-                  {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Syncing...</span> : counts.total.toLocaleString()}
-                </div>
+        {/* STEP 3: VERIFICATION INTELLIGENCE */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '20px 24px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '220px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0',
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><ShieldCheck size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-purple)' }}></span>
+            Step 3: Verification Intelligence
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Scrubbing Outcome Preview</span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '12px 20px' }}>
+              <div className="flex flex-col">
+                <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.6rem' }}>Initial Lead Load</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase' }}><Info size={10} /> Total volume</div>
               </div>
-              <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderLeft: '3px solid var(--accent-emerald)' }}>
-                <div className="flex flex-col">
-                  <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.6rem' }}>Verified Clean Base</div>
-                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-emerald)', opacity: 0.8, fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase' }}><CheckCircle2 size={10} /> Ready</div>
-                </div>
-                <div className="stat-value" style={{ color: 'var(--accent-emerald)', fontSize: '1.4rem', marginLeft: 'auto' }}>
-                  {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Wait...</span> : counts.final.toLocaleString()}
-                </div>
+              <div className="stat-value" style={{ color: 'var(--accent-blue)', fontSize: '1.4rem', marginLeft: 'auto' }}>
+                {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Syncing...</span> : counts.total.toLocaleString()}
               </div>
             </div>
+            <div className="stat-card" style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderLeft: '3px solid var(--accent-emerald)' }}>
+              <div className="flex flex-col">
+                <div className="stat-label" style={{ marginBottom: 0, fontSize: '0.6rem' }}>Verified Clean Base</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--accent-emerald)', opacity: 0.8, fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase' }}><CheckCircle2 size={10} /> Ready</div>
+              </div>
+              <div className="stat-value" style={{ color: 'var(--accent-emerald)', fontSize: '1.4rem', marginLeft: 'auto' }}>
+                {loading ? <span style={{ fontSize: '0.75rem' }} className="animate-pulse">Wait...</span> : counts.final.toLocaleString()}
+              </div>
+            </div>
+          </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
-                <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-purple)' }}>DND Removals</div>
-                <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
-                  {sessionStats.dnd.toLocaleString()}
-                </div>
-                <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
-                  <div className="h-full bg-purple-400" style={{ width: counts.total ? `${(sessionStats.dnd / counts.total) * 100}%` : '0%' }}></div>
-                </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-purple)' }}>DND Removals</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
+                {sessionStats.dnd.toLocaleString()}
               </div>
-              <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
-                <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-cyan)' }}>Sub Removals</div>
-                <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
-                  {sessionStats.sub.toLocaleString()}
-                </div>
-                <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
-                  <div className="h-full bg-emerald-400" style={{ width: counts.total ? `${(sessionStats.sub / counts.total) * 100}%` : '0%' }}></div>
-                </div>
-              </div>
-              <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
-                <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: '#f87171' }}>Unsub Blocks</div>
-                <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
-                  {sessionStats.unsub.toLocaleString()}
-                </div>
-                <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
-                  <div className="h-full bg-red-400" style={{ width: counts.total ? `${(sessionStats.unsub / counts.total) * 100}%` : '0%' }}></div>
-                </div>
-              </div>
-              <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
-                <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-blue)' }}>Operator Filter</div>
-                <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
-                  {sessionStats.operator.toLocaleString()}
-                </div>
-                <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
-                  <div className="h-full bg-blue-400" style={{ width: counts.total ? `${(sessionStats.operator / counts.total) * 100}%` : '0%' }}></div>
-                </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-purple-400" style={{ width: counts.total ? `${(sessionStats.dnd / counts.total) * 100}%` : '0%' }}></div>
               </div>
             </div>
-          </motion.section>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-cyan)' }}>Sub Removals</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
+                {sessionStats.sub.toLocaleString()}
+              </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-emerald-400" style={{ width: counts.total ? `${(sessionStats.sub / counts.total) * 100}%` : '0%' }}></div>
+              </div>
+            </div>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: '#f87171' }}>Unsub Blocks</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
+                {sessionStats.unsub.toLocaleString()}
+              </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-red-400" style={{ width: counts.total ? `${(sessionStats.unsub / counts.total) * 100}%` : '0%' }}></div>
+              </div>
+            </div>
+            <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', padding: '20px' }}>
+              <div className="stat-label" style={{ marginBottom: 8, fontSize: '0.6rem', color: 'var(--accent-blue)' }}>Operator Filter</div>
+              <div className="stat-value" style={{ color: 'var(--text-main)', fontSize: '1.5rem' }}>
+                {sessionStats.operator.toLocaleString()}
+              </div>
+              <div className="h-1 w-full bg-slate-800 rounded-full mt-3 overflow-hidden">
+                <div className="h-full bg-blue-400" style={{ width: counts.total ? `${(sessionStats.operator / counts.total) * 100}%` : '0%' }}></div>
+              </div>
+            </div>
+          </div>
+        </motion.section>
 
-          {/* STEP 4: SCRUBBING CONFIGURATION */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '20px 24px',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '220px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0',
-              position: 'relative',
-              overflow: 'hidden',
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><Zap size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-blue)' }}></span>
-              Step 4: Scrubber Configuration
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Filter Logic & Execution</span>
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-2">
-              {Object.keys(scrubOptions).map((opt) => (
-                <motion.div
-                  key={opt}
-                  whileHover={{ y: -4, background: 'rgba(255,255,255,0.08)' }}
-                  className={`glass-card-interactive flex flex-col gap-3 p-5 transition-all relative overflow-hidden ${scrubOptions[opt] ? 'ring-1 ring-cyan-500/50' : ''}`}
-                  style={{ borderRadius: '20px', border: '1px solid var(--glass-border)', background: 'var(--bg-glass-heavy)' }}
-                  onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
-                >
-                  <div className="flex items-center justify-between">
-                    <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.15em', color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--text-dim)' }}>
-                      {opt}
-                    </span>
-                    <div className={`flex items-center justify-center rounded-lg transition-all ${scrubOptions[opt] ? 'bg-cyan-500' : 'border-2 border-slate-700'}`} style={{ width: '20px', height: '20px' }}>
-                      {scrubOptions[opt] && <CheckCircle2 size={12} strokeWidth={3} style={{ color: '#020617' }} />}
-                    </div>
-                  </div>
-                  <p style={{ fontSize: '0.6rem', color: 'var(--text-dim)', lineHeight: '1.5', margin: 0, fontWeight: '600', opacity: 0.7 }}>
-                    {opt === 'dnd' ? 'National DND Check' :
-                      opt === 'sub' ? 'Subscriber Filter' :
-                        opt === 'unsub' ? 'Opt-out Verification' :
-                          'Carrier Validation'}
-                  </p>
-                </motion.div>
-              ))}
-            </div>
-            <div className="flex flex-row flex-wrap gap-3 mt-6" style={{ position: 'relative' }}>
-              <button
-                className="btn-primary glow-hover"
-                style={{ padding: '12px 16px', fontSize: '0.813rem', flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', position: 'relative' }}
-                onClick={handleRunScrub}
-                disabled={loading}
+        {/* STEP 4: SCRUBBING CONFIGURATION */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '20px 24px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.02)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '220px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Zap size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-blue)' }}></span>
+            Step 4: Scrubber Configuration
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Filter Logic & Execution</span>
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-2">
+            {Object.keys(scrubOptions).map((opt) => (
+              <motion.div
+                key={opt}
+                whileHover={{ y: -4, background: 'rgba(255,255,255,0.08)' }}
+                className={`glass-card-interactive flex flex-col gap-3 p-5 transition-all relative overflow-hidden ${scrubOptions[opt] ? 'ring-1 ring-cyan-500/50' : ''}`}
+                style={{ borderRadius: '20px', border: '1px solid var(--glass-border)', background: 'var(--bg-glass-heavy)' }}
+                onClick={() => setScrubOptions(prev => ({ ...prev, [opt]: !prev[opt] }))}
               >
-                {loading ? (
+                <div className="flex items-center justify-between">
+                  <span style={{ fontSize: '0.65rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.15em', color: scrubOptions[opt] ? 'var(--accent-cyan)' : 'var(--text-dim)' }}>
+                    {opt}
+                  </span>
+                  <div className={`flex items-center justify-center rounded-lg transition-all ${scrubOptions[opt] ? 'bg-cyan-500' : 'border-2 border-slate-700'}`} style={{ width: '20px', height: '20px' }}>
+                    {scrubOptions[opt] && <CheckCircle2 size={12} strokeWidth={3} style={{ color: '#020617' }} />}
+                  </div>
+                </div>
+                <p style={{ fontSize: '0.6rem', color: 'var(--text-dim)', lineHeight: '1.5', margin: 0, fontWeight: '600', opacity: 0.7 }}>
+                  {opt === 'dnd' ? 'National DND Check' :
+                    opt === 'sub' ? 'Subscriber Filter' :
+                      opt === 'unsub' ? 'Opt-out Verification' :
+                        'Carrier Validation'}
+                </p>
+              </motion.div>
+            ))}
+          </div>
+          <div className="flex flex-row flex-wrap gap-3 mt-6" style={{ position: 'relative' }}>
+            <button
+              className="btn-primary glow-hover"
+              style={{ padding: '12px 16px', fontSize: '0.813rem', flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', position: 'relative' }}
+              onClick={handleRunScrub}
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  SCRUBBING PIPELINE...
+                </>
+              ) : (
+                <>
+                  <Zap size={14} fill="currentColor" />
+                  EXECUTE SCRUBBING PIPELINE
+                </>
+              )}
+            </button>
+            <button
+              className="btn-secondary glow-hover"
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '120px', cursor: 'pointer' }}
+              onClick={downloadCleanedBase}
+              disabled={cleanedMsisdns.length === 0}
+            >
+              <Download size={14} />
+              EXPORT CSV
+            </button>
+            <button
+              className="btn-secondary glow-hover"
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '140px', cursor: 'pointer' }}
+              onClick={handleLogScrubEntry}
+              disabled={cleanedMsisdns.length === 0}
+            >
+              <Database size={14} />
+              LOG ENTRY
+            </button>
+            <button
+              className="btn-secondary glow-hover"
+              style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: cleanedMsisdns.length > 0 ? 'var(--accent-emerald)' : 'inherit', borderColor: cleanedMsisdns.length > 0 ? 'var(--accent-emerald)' : 'var(--glass-border)', cursor: 'pointer' }}
+              onClick={() => setIsScheduleModalOpen(true)}
+              disabled={cleanedMsisdns.length === 0}
+            >
+              <Calendar size={14} />
+              SCHEDULE
+            </button>
+          </div>
+
+          {/* SCRUBBING FULL-SECTION OVERLAY SPINNER */}
+          {loading && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.6)',
+              backdropFilter: 'blur(6px)',
+              borderRadius: '32px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 50,
+              gap: '20px',
+            }}>
+              <div style={{ position: 'relative', width: '64px', height: '64px' }}>
+                <div style={{
+                  position: 'absolute', inset: 0, borderRadius: '50%',
+                  border: '3px solid rgba(16,185,129,0.15)'
+                }} />
+                <div style={{
+                  position: 'absolute', inset: 0, borderRadius: '50%',
+                  border: '3px solid transparent',
+                  borderTopColor: 'var(--accent-emerald)',
+                  borderRightColor: 'var(--accent-emerald)',
+                  animation: 'spin 0.8s linear infinite'
+                }} />
+                <Zap size={24} style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'var(--accent-emerald)' }} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-emerald)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '4px' }}>Scrubbing Pipeline Active</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Cross-referencing {counts.total.toLocaleString()} records...</p>
+              </div>
+            </div>
+          )}
+        </motion.section>
+
+        {/* STEP 5: VERIFIED RESULTS TERMINAL */}
+        < AnimatePresence >
+          {
+            cleanedMsisdns.length > 0 && (
+              <motion.section
+                className="glass-panel sequential-step"
+                style={{
+                  padding: '10px',
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
+                  border: '1px solid var(--glass-border)',
+                  width: '100%',
+                  minHeight: '300px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  margin: '0 auto 40px auto'
+                }}
+                initial={{ opacity: 0, height: 0, marginTop: -40 }}
+                animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <div className="step-badge"><Layout size={20} /></div>
+                <h2 className="panel-title">
+                  <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
+                  Step 5: Verified Results Output
+                  <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Real-time Terminal View</span>
+                </h2>
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-emerald)' }}></div>
+                    <span style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)' }}>Live Session MSISDN Feed</span>
+                  </div>
+                  <button
+                    className="glass-pill transition-all"
+                    style={{ fontSize: '0.688rem', fontWeight: '700', color: 'var(--accent-emerald)' }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
+                      alert('Copied to clipboard!');
+                    }}
+                  >
+                    <Copy size={12} style={{ display: 'inline', marginRight: '8px' }} />
+                    COPY ALL TO CLIPBOARD
+                  </button>
+                </div>
+                <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '20px', border: '1px solid var(--glass-border)', padding: '24px', height: '220px', overflowY: 'auto' }}>
+                  <pre style={{ fontSize: '0.85rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.6' }}>{cleanedMsisdns.join('\n')}</pre>
+                </div>
+              </motion.section>
+            )
+          }
+        </AnimatePresence >
+
+        {/* STEP 6: AI CAMPAIGN STUDIO */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '40px',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '200px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0 auto 40px auto'
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Wand2 size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-rose)' }}></span>
+            Step 6: AI Campaign Studio
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Content & Flow Engineering</span>
+          </h2>
+
+          <div className="flex gap-4 mb-8">
+            <button
+              onClick={() => { setStudioMode('strategy'); setFlowError(''); }}
+              className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'strategy' ? 'bg-rose-500 text-white border-rose-400 shadow-[0_4px_25px_rgba(244,63,94,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
+            >
+              AI Strategy
+            </button>
+            <button
+              onClick={() => { setStudioMode('xml'); setFlowError(''); }}
+              className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'xml' ? 'bg-cyan-500 text-white border-emerald-400 shadow-[0_4px_25px_rgba(34,211,238,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
+            >
+              XML Blueprint
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="flex flex-col gap-6">
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                {studioMode === 'strategy' ? (
                   <>
-                    <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    SCRUBBING PIPELINE...
+                    <label className="label flex items-center gap-2" style={{ fontSize: '0.7rem' }}><BarChart3 size={12} /> AI Strategy & Goals</label>
+                    <textarea
+                      className="input-field"
+                      rows="8"
+                      style={{ fontSize: '0.8rem', padding: '16px' }}
+                      placeholder="e.g. Create a holiday promotion for prepaid users..."
+                      value={docText}
+                      onChange={(e) => setDocText(e.target.value)}
+                    />
                   </>
                 ) : (
                   <>
-                    <Zap size={14} fill="currentColor" />
-                    EXECUTE SCRUBBING PIPELINE
+                    <label className="label flex items-center gap-2" style={{ fontSize: '0.7rem' }}><Database size={12} /> XML Blueprint</label>
+                    <textarea
+                      className="input-field font-mono text-[10px]"
+                      rows="8"
+                      style={{ lineHeight: '1.5', padding: '16px' }}
+                      placeholder='<campaign name="Loyalty Program">...'
+                      value={xmlContent}
+                      onChange={(e) => setXmlContent(e.target.value)}
+                    />
                   </>
                 )}
-              </button>
-              <button
-                className="btn-secondary glow-hover"
-                style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '120px', cursor: 'pointer' }}
-                onClick={downloadCleanedBase}
-                disabled={cleanedMsisdns.length === 0}
-              >
-                <Download size={14} />
-                EXPORT CSV
-              </button>
-              <button
-                className="btn-secondary glow-hover"
-                style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '140px', cursor: 'pointer' }}
-                onClick={handleLogScrubEntry}
-                disabled={cleanedMsisdns.length === 0}
-              >
-                <Database size={14} />
-                LOG ENTRY
-              </button>
-              <button
-                className="btn-secondary glow-hover"
-                style={{ padding: '10px 16px', fontSize: '0.75rem', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: cleanedMsisdns.length > 0 ? 'var(--accent-emerald)' : 'inherit', borderColor: cleanedMsisdns.length > 0 ? 'var(--accent-emerald)' : 'var(--glass-border)', cursor: 'pointer' }}
-                onClick={() => setIsScheduleModalOpen(true)}
-                disabled={cleanedMsisdns.length === 0}
-              >
-                <Calendar size={14} />
-                SCHEDULE
-              </button>
-            </div>
 
-            {/* SCRUBBING FULL-SECTION OVERLAY SPINNER */}
-            {loading && (
-              <div style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'rgba(0,0,0,0.6)',
-                backdropFilter: 'blur(6px)',
-                borderRadius: '32px',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 50,
-                gap: '20px',
-              }}>
-                <div style={{ position: 'relative', width: '64px', height: '64px' }}>
-                  <div style={{
-                    position: 'absolute', inset: 0, borderRadius: '50%',
-                    border: '3px solid rgba(16,185,129,0.15)'
-                  }} />
-                  <div style={{
-                    position: 'absolute', inset: 0, borderRadius: '50%',
-                    border: '3px solid transparent',
-                    borderTopColor: 'var(--accent-emerald)',
-                    borderRightColor: 'var(--accent-emerald)',
-                    animation: 'spin 0.8s linear infinite'
-                  }} />
-                  <Zap size={24} style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'var(--accent-emerald)' }} />
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <p style={{ fontSize: '0.813rem', fontWeight: '700', color: 'var(--accent-emerald)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '4px' }}>Scrubbing Pipeline Active</p>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Cross-referencing {counts.total.toLocaleString()} records...</p>
-                </div>
+                <button className="btn-primary w-full mt-4" style={{ background: 'var(--accent-rose)', padding: '14px', fontSize: '0.75rem' }} onClick={generateFlowFromDoc} disabled={flowLoading}>
+                  <Wand2 size={14} className="mr-2 inline" />
+                  {flowLoading ? 'ENGINEERING...' : (studioMode === 'xml' ? 'GENERATE FROM XML' : 'GENERATE AI PROMPT')}
+                </button>
               </div>
-            )}
-          </motion.section>
-
-          {/* STEP 5: VERIFIED RESULTS TERMINAL */}
-          < AnimatePresence >
-            {
-              cleanedMsisdns.length > 0 && (
-                <motion.section
-                  className="glass-panel sequential-step"
-                  style={{
-                    padding: '10px',
-                    boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
-                    border: '1px solid var(--glass-border)',
-                    width: '100%',
-                    minHeight: '300px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    margin: '0 auto 40px auto'
-                  }}
-                  initial={{ opacity: 0, height: 0, marginTop: -40 }}
-                  animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
-                  exit={{ opacity: 0, height: 0 }}
-                >
-                  <div className="step-badge"><Layout size={20} /></div>
-                  <h2 className="panel-title">
-                    <span className="accent-line" style={{ background: 'var(--accent-emerald)' }}></span>
-                    Step 5: Verified Results Output
-                    <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Real-time Terminal View</span>
-                  </h2>
-                  <div className="flex justify-between items-center mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="animate-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-emerald)' }}></div>
-                      <span style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)' }}>Live Session MSISDN Feed</span>
-                    </div>
-                    <button
-                      className="glass-pill transition-all"
-                      style={{ fontSize: '0.688rem', fontWeight: '700', color: 'var(--accent-emerald)' }}
-                      onClick={() => {
-                        navigator.clipboard.writeText(cleanedMsisdns.join('\n'));
-                        alert('Copied to clipboard!');
-                      }}
-                    >
-                      <Copy size={12} style={{ display: 'inline', marginRight: '8px' }} />
-                      COPY ALL TO CLIPBOARD
-                    </button>
-                  </div>
-                  <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '20px', border: '1px solid var(--glass-border)', padding: '24px', height: '220px', overflowY: 'auto' }}>
-                    <pre style={{ fontSize: '0.85rem', color: 'var(--accent-emerald)', fontFamily: 'JetBrains Mono, monospace', lineHeight: '1.6' }}>{cleanedMsisdns.join('\n')}</pre>
-                  </div>
-                </motion.section>
-              )
-            }
-          </AnimatePresence >
-
-          {/* STEP 6: AI CAMPAIGN STUDIO */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '40px',
-              boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '200px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0 auto 40px auto'
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><Wand2 size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-rose)' }}></span>
-              Step 6: AI Campaign Studio
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Content & Flow Engineering</span>
-            </h2>
-
-            <div className="flex gap-4 mb-8">
-              <button
-                onClick={() => { setStudioMode('strategy'); setFlowError(''); }}
-                className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'strategy' ? 'bg-rose-500 text-white border-rose-400 shadow-[0_4px_25px_rgba(244,63,94,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
-              >
-                AI Strategy
-              </button>
-              <button
-                onClick={() => { setStudioMode('xml'); setFlowError(''); }}
-                className={`px-8 py-3 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all border-2 ${studioMode === 'xml' ? 'bg-cyan-500 text-white border-emerald-400 shadow-[0_4px_25px_rgba(34,211,238,0.4)] scale-105' : 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/50 hover:text-slate-300'}`}
-              >
-                XML Blueprint
-              </button>
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="flex flex-col gap-6">
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  {studioMode === 'strategy' ? (
-                    <>
-                      <label className="label flex items-center gap-2" style={{ fontSize: '0.7rem' }}><BarChart3 size={12} /> AI Strategy & Goals</label>
-                      <textarea
-                        className="input-field"
-                        rows="8"
-                        style={{ fontSize: '0.8rem', padding: '16px' }}
-                        placeholder="e.g. Create a holiday promotion for prepaid users..."
-                        value={docText}
-                        onChange={(e) => setDocText(e.target.value)}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <label className="label flex items-center gap-2" style={{ fontSize: '0.7rem' }}><Database size={12} /> XML Blueprint</label>
-                      <textarea
-                        className="input-field font-mono text-[10px]"
-                        rows="8"
-                        style={{ lineHeight: '1.5', padding: '16px' }}
-                        placeholder='<campaign name="Loyalty Program">...'
-                        value={xmlContent}
-                        onChange={(e) => setXmlContent(e.target.value)}
-                      />
-                    </>
-                  )}
-
-                  <button className="btn-primary w-full mt-4" style={{ background: 'var(--accent-rose)', padding: '14px', fontSize: '0.75rem' }} onClick={generateFlowFromDoc} disabled={flowLoading}>
-                    <Wand2 size={14} className="mr-2 inline" />
-                    {flowLoading ? 'ENGINEERING...' : (studioMode === 'xml' ? 'GENERATE FROM XML' : 'GENERATE AI PROMPT')}
+            <div className="flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <label className="label flex items-center gap-2 m-0" style={{ fontSize: '0.7rem' }}><Layout size={12} /> Visualization</label>
+                {mermaidFlow && (
+                  <button
+                    onClick={downloadFlowPdf}
+                    disabled={pdfLoading}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-md disabled:opacity-50"
+                  >
+                    {pdfLoading ? <Activity size={12} className="animate-spin" /> : <Download size={12} />}
+                    PDF
                   </button>
-                </div>
+                )}
               </div>
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <label className="label flex items-center gap-2 m-0" style={{ fontSize: '0.7rem' }}><Layout size={12} /> Visualization</label>
-                  {mermaidFlow && (
-                    <button
-                      onClick={downloadFlowPdf}
-                      disabled={pdfLoading}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-md disabled:opacity-50"
-                    >
-                      {pdfLoading ? <Activity size={12} className="animate-spin" /> : <Download size={12} />}
-                      PDF
-                    </button>
-                  )}
-                </div>
-                <div style={{ background: '#020617', borderRadius: '24px', border: '1px solid #1e293b', padding: '10px', minHeight: '360px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5)' }}>
-                  {(!reactFlowData.nodes || reactFlowData.nodes.length === 0) && (
-                    <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
-                      <Activity size={32} strokeWidth={1} className="opacity-20 animate-pulse" />
-                      <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-40">Awaiting Input...</span>
-                    </div>
-                  )}
-                  {reactFlowData.nodes && reactFlowData.nodes.length > 0 && (
-                    <CampaignFlowVisualizer
-                      nodes={reactFlowData.nodes}
-                      edges={reactFlowData.edges}
-                    />
-                  )}
-                </div>
+              <div style={{ background: '#020617', borderRadius: '24px', border: '1px solid #1e293b', padding: '10px', minHeight: '360px', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5)' }}>
+                {(!reactFlowData.nodes || reactFlowData.nodes.length === 0) && (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
+                    <Activity size={32} strokeWidth={1} className="opacity-20 animate-pulse" />
+                    <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-40">Awaiting Input...</span>
+                  </div>
+                )}
+                {reactFlowData.nodes && reactFlowData.nodes.length > 0 && (
+                  <CampaignFlowVisualizer
+                    nodes={reactFlowData.nodes}
+                    edges={reactFlowData.edges}
+                  />
+                )}
               </div>
             </div>
-          </motion.section >
+          </div>
+        </motion.section >
 
-          {/* STEP 7: VOIP COMMUNICATION CENTER */}
-          <motion.section
-            className="glass-panel sequential-step"
-            style={{
-              padding: '40px',
-              boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
-              border: '1px solid var(--glass-border)',
-              width: '100%',
-              minHeight: '200px',
-              display: 'flex',
-              flexDirection: 'column',
-              margin: '0 auto 40px auto'
-            }}
-            variants={{
-              hidden: { opacity: 0, y: 20 },
-              visible: { opacity: 1, y: 0 }
-            }}
-          >
-            <div className="step-badge"><Smartphone size={20} /></div>
-            <h2 className="panel-title">
-              <span className="accent-line" style={{ background: 'var(--accent-cyan)' }}></span>
-              Step 7: Global VOIP Dialer
-              <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Multi-Carrier Routing (Airtel, Jio, MTN, etc.)</span>
-            </h2>
-            <div className="flex justify-center mb-6">
-              <span style={{ padding: '4px 12px', borderRadius: '9999px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)', color: 'var(--accent-emerald)', fontSize: '0.688rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                ⚡ LIVE TELECOM INTEGRATION ACTIVE
-              </span>
-            </div>
-            <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full">
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textAlign: 'center', marginBottom: '16px' }}>Trigger manual test calls or high-priority alerts directly via the integrated VOIP shortcode platform.</p>
+        {/* STEP 7: VOIP COMMUNICATION CENTER */}
+        <motion.section
+          className="glass-panel sequential-step"
+          style={{
+            padding: '40px',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.03)',
+            border: '1px solid var(--glass-border)',
+            width: '100%',
+            minHeight: '200px',
+            display: 'flex',
+            flexDirection: 'column',
+            margin: '0 auto 40px auto'
+          }}
+          variants={{
+            hidden: { opacity: 0, y: 20 },
+            visible: { opacity: 1, y: 0 }
+          }}
+        >
+          <div className="step-badge"><Smartphone size={20} /></div>
+          <h2 className="panel-title">
+            <span className="accent-line" style={{ background: 'var(--accent-cyan)' }}></span>
+            Step 7: Global VOIP Dialer
+            <span className="text-ghost" style={{ marginLeft: 'auto', fontSize: '0.75rem' }}>Multi-Carrier Routing (Airtel, Jio, MTN, etc.)</span>
+          </h2>
+          <div className="flex justify-center mb-6">
+            <span style={{ padding: '4px 12px', borderRadius: '9999px', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)', color: 'var(--accent-emerald)', fontSize: '0.688rem', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              ⚡ LIVE TELECOM INTEGRATION ACTIVE
+            </span>
+          </div>
+          <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full">
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textAlign: 'center', marginBottom: '16px' }}>Trigger manual test calls or high-priority alerts directly via the integrated VOIP shortcode platform.</p>
 
-              <form onSubmit={handleVoipCall} className="flex flex-col gap-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Target MSISDN (Global Format)</label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="e.g. +91 99XXXXXXX"
-                      value={voipMsisdn}
-                      onChange={(e) => setVoipMsisdn(e.target.value)}
-                      style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Caller Shortcode</label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="e.g. 5566"
-                      value={voipShortcode}
-                      onChange={(e) => setVoipShortcode(e.target.value)}
-                      style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
-                    />
-                  </div>
-                </div>
-
+            <form onSubmit={handleVoipCall} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-2">
-                  <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Campaign Script (AI Voice)</label>
-                  <textarea
-                    className="input-field min-h-[80px] py-3 text-xs"
-                    placeholder="What should the AI say to the customer?"
-                    value={voipScript}
-                    onChange={(e) => setVoipScript(e.target.value)}
+                  <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Target MSISDN (Global Format)</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. +91 99XXXXXXX"
+                    value={voipMsisdn}
+                    onChange={(e) => setVoipMsisdn(e.target.value)}
                     style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
                   />
                 </div>
-
-                <button
-                  type="submit"
-                  className="btn-primary w-full shadow-2xl transition-all hover:scale-[1.02]"
-                  style={{ background: 'linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%)', height: '54px' }}
-                  disabled={voipLoading || !voipMsisdn}
-                >
-                  {voipLoading ? (
-                    <Activity className="animate-spin mr-2 inline" size={18} />
-                  ) : (
-                    <Zap size={18} className="mr-2 inline" />
-                  )}
-                  {voipLoading ? 'CONNECTING VOIP...' : 'TRIGGER VOIP CALL NOW'}
-                </button>
-              </form>
-
-              <AnimatePresence>
-                {voipResult && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className={`p-4 rounded-2xl border flex items-center gap-4 ${voipResult.success ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400' : 'bg-rose-400/10 border-rose-400/20 text-rose-400'}`}
-                  >
-                    {voipResult.success ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black uppercase tracking-widest">{voipResult.success ? 'Call Initiated' : 'Call Failed'}</span>
-                      <span className="text-xs font-bold">{voipResult.message}</span>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.section >
-
-          {/* Performance Overview */}
-          < motion.section
-            style={{ gridColumn: '1 / -1', marginTop: '60px' }}
-            variants={{
-              hidden: { opacity: 0 },
-              visible: { opacity: 1 }
-            }}
-          >
-            <PerformanceReport />
-          </motion.section >
-        </motion.div >
-
-        {/* HISTORY MODAL OVERLAY */}
-        {
-          isHistoryModalOpen && (
-            <div className="modal-overlay" onClick={() => setIsHistoryModalOpen(false)}>
-              <div className="modal-content" style={{ maxWidth: '800px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
-                <div className="modal-header">
-                  <h2 className="modal-title">Scrub History Log</h2>
-                  <p className="text-xs text-slate-400 mt-2">Past verified results execution logs</p>
-                </div>
-
-                <div className="p-4 overflow-x-auto" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-                  {historyLoading ? (
-                    <div className="flex justify-center p-10"><Activity className="animate-pulse text-emerald-400" /></div>
-                  ) : historyData.length === 0 ? (
-                    <div className="text-center p-10 text-slate-500 text-sm">No history found.</div>
-                  ) : (
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-700/50">
-                          <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest min-w-[150px]">Date</th>
-                          <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Input</th>
-                          <th className="p-3 text-xs font-bold text-emerald-400 uppercase tracking-widest text-right">Final</th>
-                          <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Filtered</th>
-                          <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest pl-6">Results Table</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historyData.map((row) => {
-                          const date = new Date(row.logged_at).toLocaleString();
-                          const filtered = row.dnd_removed + row.sub_removed + row.unsub_removed + row.operator_removed;
-                          return (
-                            <tr key={row.id} className="border-b border-slate-800/50 hover:bg-white-5 transition-colors">
-                              <td className="p-3 text-xs text-slate-300">{date}</td>
-                              <td className="p-3 text-xs text-slate-300 text-right">{row.total_input.toLocaleString()}</td>
-                              <td className="p-3 text-xs font-bold text-emerald-400 text-right">{row.final_count.toLocaleString()}</td>
-                              <td className="p-3 text-xs text-rose-400 text-right">-{filtered.toLocaleString()}</td>
-                              <td className="p-3 text-xs text-emerald-400 font-mono pl-6" style={{ fontSize: '0.65rem' }}>{row.results_table || 'N/A'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                <div className="modal-footer">
-                  <button className="btn-secondary" onClick={() => setIsHistoryModalOpen(false)}>Close</button>
+                <div className="flex flex-col gap-2">
+                  <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Caller Shortcode</label>
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="e.g. 5566"
+                    value={voipShortcode}
+                    onChange={(e) => setVoipShortcode(e.target.value)}
+                    style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
+                  />
                 </div>
               </div>
-            </div>
-          )
-        }
 
-        {/* MODAL OVERLAY */}
-        {
-          isScheduleModalOpen && (
-            <div className="modal-overlay overflow-y-auto py-10" onClick={() => setIsScheduleModalOpen(false)}>
-              <div className="modal-content !max-w-[700px]" onClick={(e) => e.stopPropagation()}>
-                <div className="modal-header border-b border-white-5 pb-6 mb-8">
-                  <div className="flex items-center gap-4 mb-2">
-                    <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                      <Calendar size={24} />
-                    </div>
-                    <div>
-                      <h2 className="modal-title !text-2xl">Configuration Studio</h2>
-                      <p className="text-xs text-slate-500 tracking-wider uppercase font-bold">Campaign Scheduling & MSC Routing</p>
-                    </div>
+              <div className="flex flex-col gap-2">
+                <label style={{ fontSize: '0.688rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-dim)', paddingLeft: '8px' }}>Campaign Script (AI Voice)</label>
+                <textarea
+                  className="input-field min-h-[80px] py-3 text-xs"
+                  placeholder="What should the AI say to the customer?"
+                  value={voipScript}
+                  onChange={(e) => setVoipScript(e.target.value)}
+                  style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)' }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn-primary w-full shadow-2xl transition-all hover:scale-[1.02]"
+                style={{ background: 'linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%)', height: '54px' }}
+                disabled={voipLoading || !voipMsisdn}
+              >
+                {voipLoading ? (
+                  <Activity className="animate-spin mr-2 inline" size={18} />
+                ) : (
+                  <Zap size={18} className="mr-2 inline" />
+                )}
+                {voipLoading ? 'CONNECTING VOIP...' : 'TRIGGER VOIP CALL NOW'}
+              </button>
+            </form>
+
+            <AnimatePresence>
+              {voipResult && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className={`p-4 rounded-2xl border flex items-center gap-4 ${voipResult.success ? 'bg-emerald-400/10 border-emerald-400/20 text-emerald-400' : 'bg-rose-400/10 border-rose-400/20 text-rose-400'}`}
+                >
+                  {voipResult.success ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-widest">{voipResult.success ? 'Call Initiated' : 'Call Failed'}</span>
+                    <span className="text-xs font-bold">{voipResult.message}</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </motion.section >
+
+        {/* Performance Overview */}
+        < motion.section
+          style={{ gridColumn: '1 / -1', marginTop: '60px' }}
+          variants={{
+            hidden: { opacity: 0 },
+            visible: { opacity: 1 }
+          }}
+        >
+          <PerformanceReport />
+        </motion.section >
+      </motion.div >
+
+      {/* HISTORY MODAL OVERLAY */}
+      {
+        isHistoryModalOpen && (
+          <div className="modal-overlay" onClick={() => setIsHistoryModalOpen(false)}>
+            <div className="modal-content" style={{ maxWidth: '800px', width: '90%' }} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">Scrub History Log</h2>
+                <p className="text-xs text-slate-400 mt-2">Past verified results execution logs</p>
+              </div>
+
+              <div className="p-4 overflow-x-auto" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {historyLoading ? (
+                  <div className="flex justify-center p-10"><Activity className="animate-pulse text-emerald-400" /></div>
+                ) : historyData.length === 0 ? (
+                  <div className="text-center p-10 text-slate-500 text-sm">No history found.</div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-700/50">
+                        <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest min-w-[150px]">Date</th>
+                        <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Input</th>
+                        <th className="p-3 text-xs font-bold text-emerald-400 uppercase tracking-widest text-right">Final</th>
+                        <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Filtered</th>
+                        <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest pl-6">Results Table</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historyData.map((row) => {
+                        const date = new Date(row.logged_at).toLocaleString();
+                        const filtered = row.dnd_removed + row.sub_removed + row.unsub_removed + row.operator_removed;
+                        return (
+                          <tr key={row.id} className="border-b border-slate-800/50 hover:bg-white-5 transition-colors">
+                            <td className="p-3 text-xs text-slate-300">{date}</td>
+                            <td className="p-3 text-xs text-slate-300 text-right">{row.total_input.toLocaleString()}</td>
+                            <td className="p-3 text-xs font-bold text-emerald-400 text-right">{row.final_count.toLocaleString()}</td>
+                            <td className="p-3 text-xs text-rose-400 text-right">-{filtered.toLocaleString()}</td>
+                            <td className="p-3 text-xs text-emerald-400 font-mono pl-6" style={{ fontSize: '0.65rem' }}>{row.results_table || 'N/A'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button className="btn-secondary" onClick={() => setIsHistoryModalOpen(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* MODAL OVERLAY */}
+      {
+        isScheduleModalOpen && (
+          <div className="modal-overlay overflow-y-auto scrollbar-hide" style={{ padding: '40px 0' }} onClick={() => setIsScheduleModalOpen(false)}>
+            <div className="modal-content !max-w-[800px] my-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header border-b border-white-5 pb-6 mb-8">
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                    <Calendar size={24} />
+                  </div>
+                  <div>
+                    <h2 className="modal-title !text-2xl">Configuration Studio</h2>
+                    <p className="text-xs text-slate-500 tracking-wider uppercase font-bold">Campaign Scheduling & MSC Routing</p>
                   </div>
                 </div>
+              </div>
+              
+              <div className="pr-2">
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 px-2">
+              {/* ── Section 1: Identity ── */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-4 rounded bg-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Identity & Routing</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
                   <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-3">
-                      <Layout size={14} className="text-emerald-400" />
-                      OBD Project Identifier
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Hash size={14} className="text-cyan-400" />
+                      Service ID
                     </label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="e.g. Summer_Campaign_V1"
-                      value={scheduleData.obd_name}
-                      onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value })}
-                    />
-                    <p className="text-[9px] text-slate-600 mt-2 px-1 uppercase tracking-tighter">Unique namespace for reporting</p>
+                    <input type="number" className="input-field font-mono" placeholder="e.g. 1001"
+                      value={scheduleData.service_id}
+                      onChange={(e) => setScheduleData({ ...scheduleData, service_id: e.target.value })} />
                   </div>
-
                   <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-3">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Layout size={14} className="text-emerald-400" />
+                      Job Name / OBD Name
+                    </label>
+                    <input type="text" className="input-field" placeholder="e.g. Summer_Campaign_V1"
+                      value={scheduleData.obd_name}
+                      onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value, jobname: e.target.value })} />
+                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Unique namespace for reporting (max 25 chars)</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
                       <Zap size={14} className="text-amber-400" />
-                      Voice/Flow Logic selection
+                      Voice/Flow Logic
                     </label>
                     <div className="relative">
-                      <select
-                        className="input-field pr-10 appearance-none"
+                      <select className="input-field pr-10 appearance-none"
                         value={scheduleData.flow_name}
-                        onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}
-                      >
+                        onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}>
                         <option value="" disabled>Select execution logic...</option>
                         <option value="Promo Flow 1">Standard Promotion Engine</option>
                         <option value="Holiday Special">Holiday Multi-tier Logic</option>
                         {mermaidFlow && <option value="AI Generated Flow">AI Generated Scrubber Flow</option>}
                       </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 line-height-1">
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                         <ChevronRight size={16} className="rotate-90" />
                       </div>
                     </div>
                   </div>
-
                   <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-3">
-                      <Activity size={14} className="text-emerald-400" />
-                      MSC Connection IP Path
-                    </label>
-                    <input
-                      type="text"
-                      className="input-field font-mono"
-                      placeholder="10.200.XXX.XXX"
-                      value={scheduleData.msc_ip}
-                      onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-3">
+                    <label className="label flex items-center gap-2 mb-2">
                       <Info size={14} className="text-purple-400" />
                       CLI Masking / Caller ID
                     </label>
-                    <input
-                      type="text"
-                      className="input-field"
-                      placeholder="e.g. 556677"
+                    <input type="text" className="input-field" placeholder="e.g. 556677"
                       value={scheduleData.cli}
-                      onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })}
-                    />
+                      onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })} />
                   </div>
                 </div>
+              </div>
 
-                <div className="flex gap-4 mt-12 pt-8 border-t border-white-5">
-                  <button
-                    className="btn-secondary flex-1 py-4 font-bold tracking-widest text-xs uppercase"
-                    onClick={() => setIsScheduleModalOpen(false)}
-                  >
-                    Discard Configuration
-                  </button>
+              {/* ── Section 2: Schedule ── */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-4 rounded bg-amber-400" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Schedule & Timing</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Calendar size={14} className="text-emerald-400" />
+                      Start Date
+                    </label>
+                    <input type="date" className="input-field font-mono"
+                      value={scheduleData.start_date}
+                      onChange={(e) => setScheduleData({ ...scheduleData, start_date: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Calendar size={14} className="text-rose-400" />
+                      End Date
+                    </label>
+                    <input type="date" className="input-field font-mono"
+                      value={scheduleData.end_date}
+                      onChange={(e) => setScheduleData({ ...scheduleData, end_date: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Clock size={14} className="text-cyan-400" />
+                      Start Time
+                    </label>
+                    <input type="time" className="input-field font-mono"
+                      value={scheduleData.start_time}
+                      onChange={(e) => setScheduleData({ ...scheduleData, start_time: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Clock size={14} className="text-rose-400" />
+                      End Time
+                    </label>
+                    <input type="time" className="input-field font-mono"
+                      value={scheduleData.end_time}
+                      onChange={(e) => setScheduleData({ ...scheduleData, end_time: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <AlertTriangle size={14} className="text-amber-400" />
+                      Blackout Hours
+                    </label>
+                    <input type="number" className="input-field font-mono" placeholder="0" min="0"
+                      value={scheduleData.blackout_hours}
+                      onChange={(e) => setScheduleData({ ...scheduleData, blackout_hours: e.target.value })} />
+                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Hours to skip dialling (e.g. night hours)</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Layers size={14} className="text-purple-400" />
+                      Day Wise
+                    </label>
+                    <div className="relative">
+                      <select className="input-field pr-10 appearance-none font-mono"
+                        value={scheduleData.daywise}
+                        onChange={(e) => setScheduleData({ ...scheduleData, daywise: e.target.value })}>
+                        <option value="0">0 — All Days</option>
+                        <option value="1">1 — Weekdays Only</option>
+                        <option value="2">2 — Weekends Only</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                        <ChevronRight size={16} className="rotate-90" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 3: Connection & Server ── */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-4 rounded bg-cyan-400" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">Connection & Server</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Activity size={14} className="text-emerald-400" />
+                      MSC Connection IP Path
+                    </label>
+                    <input type="text" className="input-field font-mono" placeholder="10.200.XXX.XXX"
+                      value={scheduleData.msc_ip}
+                      onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Server size={14} className="text-cyan-400" />
+                      Server IP
+                    </label>
+                    <input type="text" className="input-field font-mono" placeholder="e.g. 192.168.1.100"
+                      value={scheduleData.server_ip}
+                      onChange={(e) => setScheduleData({ ...scheduleData, server_ip: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 4: Execution Parameters ── */}
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-4 rounded bg-purple-400" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">Execution Parameters</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 px-2">
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <BarChart3 size={14} className="text-amber-400" />
+                      Priority
+                    </label>
+                    <input type="number" className="input-field font-mono" placeholder="1" min="1" max="10"
+                      value={scheduleData.priority}
+                      onChange={(e) => setScheduleData({ ...scheduleData, priority: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <ShieldCheck size={14} className="text-emerald-400" />
+                      Status
+                    </label>
+                    <div className="relative">
+                      <select className="input-field pr-10 appearance-none"
+                        value={scheduleData.status}
+                        onChange={(e) => setScheduleData({ ...scheduleData, status: e.target.value })}>
+                        <option value="Active">Active</option>
+                        <option value="Paused">Paused</option>
+                        <option value="Scheduled">Scheduled</option>
+                        <option value="Completed">Completed</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                        <ChevronRight size={16} className="rotate-90" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2">
+                      <Phone size={14} className="text-cyan-400" />
+                      Max OBD Count
+                    </label>
+                    <input type="number" className="input-field font-mono" placeholder="e.g. 50000" min="0"
+                      value={scheduleData.max_obd_count}
+                      onChange={(e) => setScheduleData({ ...scheduleData, max_obd_count: e.target.value })} />
+                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Max concurrent OBD calls</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Section 5: Retry & System (greyed out fields) ── */}
+              <div className="mb-2">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1 h-4 rounded bg-slate-500" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Retry & System Defaults</span>
+                  <span className="text-[8px] text-slate-600 ml-2 bg-slate-800 px-2 py-0.5 rounded">READ-ONLY</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 px-2">
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2 opacity-50">
+                      <Repeat size={14} className="text-slate-500" />
+                      Max Retry
+                    </label>
+                    <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
+                      value={scheduleData.max_retry} readOnly disabled />
+                    <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2 opacity-50">
+                      <Repeat size={14} className="text-slate-500" />
+                      Remaining Retry
+                    </label>
+                    <input type="number" className="input-field font-mono" placeholder="1" min="0"
+                      value={scheduleData.remaining_retry}
+                      onChange={(e) => setScheduleData({ ...scheduleData, remaining_retry: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2 opacity-50">
+                      <Star size={14} className="text-slate-500" />
+                      Record Dedication
+                    </label>
+                    <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
+                      value={scheduleData.recorddedication} readOnly disabled />
+                    <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="label flex items-center gap-2 mb-2 opacity-50">
+                      <Copy size={14} className="text-slate-500" />
+                      Star Copy
+                    </label>
+                    <div className="relative">
+                      <select className="input-field pr-10 appearance-none font-mono"
+                        value={scheduleData.starcopy}
+                        onChange={(e) => setScheduleData({ ...scheduleData, starcopy: e.target.value })}>
+                        <option value="0">0 — Disabled</option>
+                        <option value="1">1 — Enabled</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                        <ChevronRight size={16} className="rotate-90" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-4 mt-8 pt-6 border-t border-white-5 sticky bottom-0 -mx-8 px-8 pb-2 bg-[var(--bg-main)] z-20">
+                <button
+                  className="btn-secondary flex-1 py-4 font-bold tracking-widest text-xs uppercase"
+                  onClick={() => setIsScheduleModalOpen(false)}
+                >
+                  Discard Configuration
+                </button>
+                {successMsg ? (
+                  <div className="flex-[2] flex flex-col items-center gap-4 py-4 animate-in fade-in">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-emerald-400 font-black text-sm tracking-widest uppercase mb-2">Campaign Launched Successfully!</div>
+                      <div className="text-xs opacity-60 font-mono space-y-1">
+                        <div>📋 Project: <span className="text-emerald-300 font-bold">{scheduleData.obd_name}</span></div>
+                        <div>📊 MSISDNs Exported: <span className="text-emerald-300 font-bold">{cleanedMsisdns?.length?.toLocaleString() || '0'}</span></div>
+                        <div>📡 MSC IP: <span className="text-emerald-300 font-bold">{scheduleData.msc_ip}</span></div>
+                        <div>🎵 Flow: <span className="text-emerald-300 font-bold">{scheduleData.flow_name}</span></div>
+                      </div>
+                    </div>
+                    <button
+                      className="mt-2 px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold tracking-widest text-xs uppercase transition-all active:scale-95"
+                      onClick={() => {
+                        setIsScheduleModalOpen(false);
+                        setSuccessMsg('');
+                      }}
+                    >
+                      ✓ Done
+                    </button>
+                  </div>
+                ) : (
                   <button
                     className="btn-primary !bg-emerald-500 hover:!bg-emerald-400 shadow-emerald-500/20 flex-[2] py-4 rounded-2xl font-bold tracking-widest text-xs uppercase flex items-center justify-center gap-3 transition-all active:scale-95"
+                    disabled={isLaunching}
                     onClick={async () => {
                       if (isLaunching) return;
                       setIsLaunching(true);
                       setSuccessMsg('');
                       try {
-                        // 1. Save Scheduling Details FIRST
+                        // 1. Save Scheduling Details
                         const schedRes = await fetch(`${API_BASE}/schedule-promotion`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -2152,12 +2548,13 @@ export default function Dashboard() {
 
                         if (!schedRes.ok) {
                           const err = await schedRes.json();
-                          alert(`Scheduling Failed: ${err.detail}`);
+                          setSuccessMsg('');
                           setIsLaunching(false);
+                          alert(`Scheduling Failed: ${err.detail}`);
                           return;
                         }
 
-                        // 2. Trigger Launch
+                        // 2. Launch Campaign (save MSISDNs)
                         const launchRes = await fetch(`${API_BASE}/launch-campaign`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -2169,112 +2566,106 @@ export default function Dashboard() {
 
                         if (launchRes.ok) {
                           const data = await launchRes.json();
-                          setSuccessMsg(`CAMPAIGN LIVE! 🚀`);
+                          setSuccessMsg('SUCCESS');
                           setIsLaunching(false);
-
-                          // Close modal and clear success message after a brief delay
-                          setTimeout(() => {
-                            setIsScheduleModalOpen(false);
-                            setSuccessMsg('');
-                            // Show a final browser alert for confirmation
-                            alert("Campaign Scheduled & Targets Exported Successfully!");
-                          }, 1500);
                         } else {
                           const err = await launchRes.json();
-                          alert(`Launch Failed: ${err.detail || 'Internal Server Error'}`);
                           setIsLaunching(false);
+                          alert(`Launch Failed: ${err.detail || 'Internal Server Error'}`);
                         }
                       } catch (err) {
-                        alert(`Network Error: ${err.message}`);
                         setIsLaunching(false);
+                        alert(`Network Error: ${err.message}`);
                       }
                     }}
                   >
                     <Zap size={16} fill="white" className={isLaunching ? "animate-spin" : ""} />
-                    {isLaunching ? "Launching..." : successMsg || "Initialize & Launch Campaign"}
-                  </button >
-                </div >
-              </div >
-            </div >
-          )
-        }
-        {/* VIRTUAL IVR SIMULATOR MODAL */}
-        <AnimatePresence>
-          {activeVirtualCall && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 100 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 100 }}
-              style={{
-                position: 'fixed',
-                bottom: '40px',
-                right: '40px',
-                width: '320px',
-                background: 'var(--bg-glass-heavy)',
-                backdropFilter: 'blur(40px)',
-                border: '2px solid var(--accent-cyan)',
-                borderRadius: '32px',
-                padding: '32px',
-                zIndex: 2000,
-                boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(34,211,238,0.2)'
-              }}
-            >
-              <div className="flex flex-col items-center gap-6">
-                <div className="relative">
-                  <div className="w-20 h-20 rounded-full bg-emerald-400/20 flex items-center justify-center text-emerald-400 animate-pulse">
-                    <Phone size={40} />
-                  </div>
-                  <div className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-ping" />
-                </div>
-
-                <div className="text-center">
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Incoming Virtual Call</span>
-                  <h3 className="text-xl font-bold mt-1">{activeVirtualCall.msisdn}</h3>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Shortcode: {activeVirtualCall.shortcode}</p>
-                </div>
-
-                {activeVirtualCall.status === 'ringing' ? (
-                  <div className="flex gap-4 w-full">
-                    <button
-                      onClick={() => handleVirtualRespond('hangup')}
-                      className="flex-1 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 hover:bg-rose-500 hover:text-white transition-all flex items-center justify-center"
-                    >
-                      <X size={24} />
-                    </button>
-                    <button
-                      onClick={() => handleVirtualRespond('answered')}
-                      className="flex-1 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center animate-bounce"
-                    >
-                      <PhoneOutgoing size={24} />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-6 w-full">
-                    <div className="p-4 rounded-2xl bg-white-5 border border-white-10 text-[11px] font-medium leading-relaxed italic text-slate-300">
-                      "{activeVirtualCall.script}"
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 w-full">
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#'].map(key => (
-                        <button
-                          key={key}
-                          className="h-10 rounded-lg bg-white-5 hover:bg-emerald-400/20 transition-all font-mono text-xs text-slate-400"
-                          onClick={() => console.log(`DTMF: ${key}`)}
-                        >
-                          {key}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={() => handleVirtualRespond('hangup')}
-                      className="w-full h-12 rounded-xl bg-rose-500 text-white font-bold uppercase tracking-widest text-[10px]"
-                    >
-                      End Simulation
-                    </button>
-                  </div>
+                    {isLaunching ? "Launching..." : "Initialize & Launch Campaign"}
+                  </button>
                 )}
               </div>
-            </motion.div>
-          )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+      {/* VIRTUAL IVR SIMULATOR MODAL */}
+      <AnimatePresence>
+        {activeVirtualCall && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 100 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 100 }}
+            style={{
+              position: 'fixed',
+              bottom: '40px',
+              right: '40px',
+              width: '320px',
+              background: 'var(--bg-glass-heavy)',
+              backdropFilter: 'blur(40px)',
+              border: '2px solid var(--accent-cyan)',
+              borderRadius: '32px',
+              padding: '32px',
+              zIndex: 2000,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(34,211,238,0.2)'
+            }}
+          >
+            <div className="flex flex-col items-center gap-6">
+              <div className="relative">
+                <div className="w-20 h-20 rounded-full bg-emerald-400/20 flex items-center justify-center text-emerald-400 animate-pulse">
+                  <Phone size={40} />
+                </div>
+                <div className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-ping" />
+              </div>
+
+              <div className="text-center">
+                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Incoming Virtual Call</span>
+                <h3 className="text-xl font-bold mt-1">{activeVirtualCall.msisdn}</h3>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Shortcode: {activeVirtualCall.shortcode}</p>
+              </div>
+
+              {activeVirtualCall.status === 'ringing' ? (
+                <div className="flex gap-4 w-full">
+                  <button
+                    onClick={() => handleVirtualRespond('hangup')}
+                    className="flex-1 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 hover:bg-rose-500 hover:text-white transition-all flex items-center justify-center"
+                  >
+                    <X size={24} />
+                  </button>
+                  <button
+                    onClick={() => handleVirtualRespond('answered')}
+                    className="flex-1 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center animate-bounce"
+                  >
+                    <PhoneOutgoing size={24} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-6 w-full">
+                  <div className="p-4 rounded-2xl bg-white-5 border border-white-10 text-[11px] font-medium leading-relaxed italic text-slate-300">
+                    "{activeVirtualCall.script}"
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 w-full">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#'].map(key => (
+                      <button
+                        key={key}
+                        className="h-10 rounded-lg bg-white-5 hover:bg-emerald-400/20 transition-all font-mono text-xs text-slate-400"
+                        onClick={() => console.log(`DTMF: ${key}`)}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => handleVirtualRespond('hangup')}
+                    className="w-full h-12 rounded-xl bg-rose-500 text-white font-bold uppercase tracking-widest text-[10px]"
+                  >
+                    End Simulation
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );

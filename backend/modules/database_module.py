@@ -2,6 +2,8 @@ import os
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+import bcrypt
+from psycopg2.extras import execute_values
 
 load_dotenv()
 
@@ -48,12 +50,18 @@ class DatabaseModule:
                         if "?" not in url: url += "?sslmode=require"
                         else: url += "&sslmode=require"
                 
+                connect_args = {"connect_timeout": 10}
+                if "sslmode=require" in url:
+                    connect_args["sslmode"] = "require"
+                    
                 self.engine = create_engine(
                     url, 
                     pool_pre_ping=True,
                     pool_recycle=300, # Recycle connections every 5 mins
                     pool_timeout=30,
-                    connect_args={"sslmode": "require"} if "sslmode=require" in url else {}
+                    pool_size=5,
+                    max_overflow=10,
+                    connect_args=connect_args
                 )
             elif url:
                 self.engine = create_engine(url)
@@ -232,7 +240,7 @@ class DatabaseModule:
         try:
             raw_conn = self.engine.raw_connection()
             cursor = raw_conn.cursor()
-            from psycopg2.extras import execute_values
+            # from psycopg2.extras import execute_values (moved to top-level)
             
             for chunk in msisdn_chunks:
                 data = [(job_id, str(m)) for m in chunk if m]
@@ -377,7 +385,7 @@ class DatabaseModule:
             return []
 
     def create_admin_user(self, username, password):
-        import bcrypt
+        # import bcrypt (moved to top-level)
         pwd_bytes = password.encode('utf-8')
         salt = bcrypt.gensalt()
         pwd_hash = bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
@@ -394,7 +402,7 @@ class DatabaseModule:
             return False
 
     def verify_admin_user(self, username, password):
-        import bcrypt
+        # import bcrypt (moved to top-level)
         try:
             with self.engine.connect() as conn:
                 res = conn.execute(
@@ -415,7 +423,7 @@ class DatabaseModule:
     def log_scrub_history(self, stats: dict):
         """Creates an entry in a new table specific for scrub history log."""
         msisdn_list = stats.pop("msisdn_list", [])
-        results_table = "NONE"
+        results_table = stats.get("results_table", "NONE")
         if msisdn_list:
             success, table_name = self.save_verified_scrub_results(msisdn_list)
             if success:
@@ -579,7 +587,7 @@ class DatabaseModule:
             """)
             
             # 2. Incredible fast chunked bulk insertion
-            from psycopg2.extras import execute_values
+            # from psycopg2.extras import execute_values (moved to top-level)
             for chunk in msisdn_chunks:
                 data = [(str(m),) for m in chunk]
                 execute_values(
@@ -776,7 +784,7 @@ class DatabaseModule:
             """)
             
             # 3. Fast chunked bulk insert
-            from psycopg2.extras import execute_values
+            # from psycopg2.extras import execute_values (moved to top-level)
             print(f"DEBUG: Bulk inserting {len(msisdns)} rows into {table_name} in chunks...")
             for chunk in msisdn_chunks:
                 data = [(str(m),) for m in chunk]

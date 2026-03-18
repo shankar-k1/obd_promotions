@@ -79,6 +79,22 @@ def process_job(job_id: int):
             final_count=len(final_base),
             results_table=table_name,
         )
+
+        # Automatically log to scrub history for the dashboard
+        try:
+            db.log_scrub_history({
+                "total_input": job.get("total_input", 0),
+                "final_count": len(final_base),
+                "dnd_removed": report.get("dnd_removed", 0),
+                "sub_removed": report.get("sub_removed", 0),
+                "unsub_removed": report.get("unsub_removed", 0),
+                "operator_removed": report.get("operator_removed", 0),
+                "results_table": table_name,
+                "msisdn_list": [] # Statistics already saved in results_table
+            })
+        except Exception as log_err:
+            logger.log("backend", "error", f"Failed to auto-log history for job {job_id}: {log_err}", "scrub_worker")
+
         logger.log(
             "backend",
             "success",

@@ -41,6 +41,17 @@ async def lifespan(app: FastAPI):
     else:
         app.state.public_url = None
 
+    # Start scrub worker as a background daemon thread
+    from modules.scrub_worker import run_forever as scrub_worker_loop
+    worker_thread = threading.Thread(
+        target=scrub_worker_loop,
+        kwargs={"poll_interval": 3},
+        daemon=True,
+        name="ScrubWorker"
+    )
+    worker_thread.start()
+    print("DEBUG: Scrub worker daemon thread started.")
+
     yield
     # Shutdown logic
     if ngrok:
@@ -557,6 +568,17 @@ async def flow_from_xml(request: FlowXMLRequest):
         flow = prompt_agent.generate_flow_from_xml(request.xml_content)
         return {"flow": flow}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-scp-flow")
+async def generate_scp_flow(request: FlowDocRequest):
+    """Generates a specialized SCP IVR flow JSON from document text."""
+    try:
+        flow_json = prompt_agent.generate_scp_flow_json(request.doc_text)
+        import json
+        return json.loads(flow_json)
+    except Exception as e:
+        print(f"Error in generate_scp_flow: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/export-flow-pdf")
