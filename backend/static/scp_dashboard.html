@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>SCP IVR Backend Status</title>
+  <meta charset="UTF-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #0e1829;
+      --border: #1c2e47;
+      --text: #e8f4ff;
+      --accent: #60a5fa;
+      --dim: #4d7299;
+      --green: #34d399;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 40px;
+      min-height: 100vh
+    }
+
+    code,
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .header-container {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 8px;
+    }
+
+    .logo-box {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #1d4ed8, #0ea5e9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 16px;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(29, 78, 216, 0.3);
+    }
+
+    h1 {
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      color: var(--text);
+    }
+
+    .sub {
+      font-family: 'JetBrains Mono';
+      font-size: 16px;
+      color: var(--dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 15px;
+      font-weight: 700;
+      background: rgba(52, 211, 153, 0.1);
+      color: var(--green);
+      border: 1px solid rgba(52, 211, 153, 0.25);
+      margin-bottom: 24px
+    }
+
+    .pulse {
+      width: 6px;
+      height: 6px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse-anim 2s infinite;
+    }
+
+    @keyframes pulse-anim {
+      0% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.8);
+      }
+
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      transition: all 0.2s ease;
+    }
+
+    .card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .card h3 {
+      font-size: 14px;
+      color: var(--dim);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+      font-weight: 700;
+    }
+
+    .stat {
+      font-family: 'JetBrains Mono';
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--dim);
+      margin-top: 6px
+    }
+
+    .ep-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 20px;
+    }
+
+    .ep {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .ep:hover {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--border);
+    }
+
+    .m {
+      font-family: 'JetBrains Mono';
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 800;
+      min-width: 42px;
+      text-align: center;
+    }
+
+    .get {
+      background: rgba(52, 211, 153, 0.12);
+      color: var(--green);
+      border: 1px solid rgba(52, 211, 153, 0.2)
+    }
+
+    .post {
+      background: rgba(96, 165, 250, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(96, 165, 250, 0.2)
+    }
+
+    .del {
+      background: rgba(248, 113, 113, 0.12);
+      color: #f87171;
+      border: 1px solid rgba(248, 113, 113, 0.2)
+    }
+
+    .url {
+      font-family: 'JetBrains Mono';
+      font-size: 12px;
+      color: #8aafd4;
+      flex: 1;
+    }
+
+    .desc {
+      font-size: 10px;
+      color: var(--dim);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 8px;
+      margin-bottom: 5px;
+      border: 1px solid transparent;
+    }
+
+    .row:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="header-container">
+    <div class="logo-box">SCP</div>
+    <h1>IVR Flow Tool — Backend Status</h1>
+  </div>
+  <div class="sub">
+    <span>SYSTEM: FASTAPI v1</span>
+    <span style="opacity:0.3">|</span>
+    <span>ENGINE: BnG CORE 4</span>
+    <span style="opacity:0.3">|</span>
+    <span>PORT: 8000</span>
+  </div>
+
+  <div class="badge">
+    <div class="pulse"></div> RUNNING & CONNECTED
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Flows</h3>
+      <div class="stat" id="s-flows">-</div>
+      <div class="stat-label">saved scp flows</div>
+    </div>
+    <div class="card">
+      <h3>Nodes</h3>
+      <div class="stat" id="s-nodes">-</div>
+      <div class="stat-label">logic nodes parsed</div>
+    </div>
+    <div class="card">
+      <h3>Edges</h3>
+      <div class="stat" id="s-edges">-</div>
+      <div class="stat-label">flow transitions</div>
+    </div>
+    <div class="card">
+      <h3>Prompts</h3>
+      <div class="stat" id="s-prompts">-</div>
+      <div class="stat-label">audio prompt paths</div>
+    </div>
+    <div class="card">
+      <h3>Explains</h3>
+      <div class="stat" id="s-exp">-</div>
+      <div class="stat-label">ai flow analyses</div>
+    </div>
+  </div>
+
+  <div class="ep-grid">
+    <div class="card">
+      <h3 style="margin-bottom:16px">Primary API Endpoints</h3>
+      <a class="ep" href="/health-check" target="_blank"><span class="m get">GET</span><span
+          class="url">/health-check</span><span class="desc">Health & DB</span></a>
+      <a class="ep" href="/api/stats" target="_blank"><span class="m get">GET</span><span
+          class="url">/api/stats</span><span class="desc">Dashboard Stats</span></a>
+      <a class="ep" href="/api/flows" target="_blank"><span class="m get">GET</span><span
+          class="url">/api/flows</span><span class="desc">List All Flows</span></a>
+      <div class="ep"><span class="m post">POST</span><span class="url">/api/flows</span><span class="desc">Save Builder
+          Flow</span></div>
+      <div class="ep"><span class="m get">GET</span><span class="url">/api/flows/:uuid</span><span class="desc">Get Full
+          Object</span></div>
+      <div class="ep"><span class="m post">POST</span><span class="url">/api/flows/:uuid/explanation</span><span
+          class="desc">Save Explain</span></div>
+      <div class="ep"><span class="m del">DEL</span><span class="url">/api/flows/:uuid</span><span class="desc">Delete
+          Flow</span></div>
+      <a class="ep" href="/api/stats/prompts" target="_blank"><span class="m get">GET</span><span
+          class="url">/api/stats/prompts</span><span class="desc">All Prompts</span></a>
+      <a class="ep" href="/logging-dashboard" target="_blank"
+        style="margin-top:10px; background:rgba(96,165,250,0.05); border-color:var(--border)"><span class="m get"
+          style="background:var(--accent); color:#fff">SYS</span><span class="url"
+          style="color:var(--accent)">/logging-dashboard</span><span class="desc" style="color:var(--accent)">System
+          Logs</span></a>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:16px">Recent Activity</h3>
+      <div id="recent" style="font-size:12px; color:var(--dim)">Fetching database state...</div>
+    </div>
+  </div>
+
+  <script>
+    function refreshStats() {
+      fetch('/api/stats').then(r => r.json()).then(d => {
+        if (!d.ok) return;
+        const c = d.counts || d.stats || {};
+        document.getElementById('s-flows').textContent = c.total_flows ?? 0;
+        document.getElementById('s-nodes').textContent = c.total_nodes ?? 0;
+        document.getElementById('s-edges').textContent = c.total_edges ?? 0;
+        document.getElementById('s-prompts').textContent = c.total_prompts ?? 0;
+        document.getElementById('s-exp').textContent = c.total_explanations ?? 0;
+
+        const rec = document.getElementById('recent');
+        if (!d.recentFlows || !d.recentFlows.length) {
+          rec.innerHTML = '<div style="padding:20px; text-align:center; color:rgba(255,255,255,0.1)">No flows in system.<br>Upload an IVR PDF to begin.</div>';
+          return;
+        }
+        rec.innerHTML = d.recentFlows.map(f => {
+          return `<div class="row">
+            <div class="dot" style="background:var(--accent)"></div>
+            <span style="color:var(--text); flex:1; font-weight:600">${f.flow_name || 'Unnamed'}</span>
+            <span style="font-family:monospace; font-size:10px; color:var(--dim)">${f.short_code || ''}</span>
+            <span style="font-size:9px; padding:2px 8px; border-radius:4px; background:rgba(96,165,250,0.1); color:var(--accent); font-weight:700">${f.source || 'builder'}</span>
+          </div>`;
+        }).join('');
+      }).catch(err => {
+        document.getElementById('recent').innerHTML = '<div style="color:#f87171">Connection to backend lost.</div>';
+      });
+    }
+
+    refreshStats();
+    setInterval(refreshStats, 5000);
+  </script>
+</body>
+
+</html>

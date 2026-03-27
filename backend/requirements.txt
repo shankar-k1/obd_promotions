@@ -15,3 +15,6 @@ psycopg2-binary
 gunicorn
 passlib
 bcrypt
+pymysql
+cryptography
+diskcache

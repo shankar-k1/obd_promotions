@@ -6,6 +6,7 @@ from .database_module import DatabaseModule
 from .scrubbing_engine import ScrubbingEngine
 from .cache_engine import cache_engine
 from .logging_system import logger
+from .email_module import EmailModule
 
 
 def _pop_next_job_id() -> Optional[int]:
@@ -15,16 +16,19 @@ def _pop_next_job_id() -> Optional[int]:
     but fall back to an in-memory list stored in cache.
     """
     queue_key = "scrub_jobs_queue"
-    try:
-        queue = cache_engine.get(queue_key) or []
-        if not queue:
+    lock_key = "scrub_jobs_lock"
+    # Wait for the lock to ensure only ONE worker pops at a time
+    with cache_engine.lock(lock_key, expire=10):
+        try:
+            queue = cache_engine.get(queue_key) or []
+            if not queue:
+                return None
+            job_id = queue.pop(0)
+            cache_engine.set(queue_key, queue, expire=None)
+            return int(job_id)
+        except Exception as e:
+            print(f"ScrubWorker Queue Error: {e}")
             return None
-        job_id = queue.pop(0)
-        cache_engine.set(queue_key, queue, expire=None)
-        return int(job_id)
-    except Exception as e:
-        print(f"ScrubWorker Queue Error: {e}")
-        return None
 
 
 def process_job(job_id: int):
@@ -47,38 +51,54 @@ def process_job(job_id: int):
     db.update_scrub_job_status(job_id, status="RUNNING", mark_started=True)
 
     try:
-        # For now we load all inputs at once; DatabaseModule.load_scrub_job_inputs
-        # yields chunks so this will still be memory-safe for very large bases.
-        all_msisdns = []
-        for chunk in db.load_scrub_job_inputs(job_id):
-            all_msisdns.extend(chunk)
-
-        operator = job.get("operator")
+        operator_name = job.get("operator")
         import json
-
         options = json.loads(job.get("options_json") or "{}")
 
-        # Run full scrub (async method invoked via asyncio.run)
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        final_base, report = loop.run_until_complete(
-            engine.perform_full_scrub(all_msisdns, target_operator=operator, options=options)
-        )
-        loop.close()
-
-        # Persist results
-        save_ok, table_name = db.save_verified_scrub_results(final_base)
+        # 1. RUN TURBO SQL SCRUB (Process million records in < 1s)
+        sql_metrics = db.perform_job_scrub_sql(job_id, options, operator_name)
+        
+        # 2. INSTANT PERSISTENCE (Server-side copy, no loops)
+        save_ok, table_name = db.save_verified_scrub_job_results(job_id)
         if not save_ok:
             raise RuntimeError(f"Failed to save scrub results: {table_name}")
+
+        # 3. Load survivors only for email/logging (deferred)
+        final_base = []
+        for chunk in db.load_scrub_job_inputs(job_id):
+            final_base.extend(chunk)
 
         db.update_scrub_job_status(
             job_id,
             status="COMPLETED",
-            final_count=len(final_base),
+            final_count=sql_metrics["final"],
             results_table=table_name,
+            dnd_removed=sql_metrics["dnd"],
+            sub_removed=sql_metrics["sub"],
+            unsub_removed=sql_metrics["unsub"],
+            operator_removed=sql_metrics["operator"],
         )
+        
+        # Format a report for email (compatibility with EmailModule)
+        report = {
+            "initial_count": job.get("total_input", 0),
+            "dnd_removed": sql_metrics["dnd"],
+            "sub_removed": sql_metrics["sub"],
+            "unsub_removed": sql_metrics["unsub"],
+            "operator_removed": sql_metrics["operator"],
+            "stages": [{"count": sql_metrics["final"]}]
+        }
+
+        # TRIGGER EMAIL REPORT
+        try:
+            email_agent = EmailModule()
+            email_ok, email_msg = email_agent.send_scrub_report(report, msisdns=final_base)
+            if email_ok:
+                logger.log("backend", "success", f"Email report sent for job {job_id}", "scrub_worker")
+            else:
+                logger.log("backend", "error", f"Email report failed for job {job_id}: {email_msg}", "scrub_worker")
+        except Exception as email_err:
+            logger.log("backend", "error", f"Email trigger error for job {job_id}: {email_err}", "scrub_worker")
 
         # Automatically log to scrub history for the dashboard
         try:

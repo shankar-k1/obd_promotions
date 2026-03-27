@@ -1,5 +1,14 @@
 import { useState, useRef, useMemo, useCallback } from "react";
 
+const getApiBase = () => {
+  if (typeof window === "undefined") return "http://localhost:8000";
+  const { hostname, port } = window.location;
+  if (port === '8000' || port === '' || port === '443') return '';
+  if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+  return `http://${hostname}:8000`;
+};
+const API_BASE = getApiBase();
+
 // ─── Themes ───────────────────────────────────────────────────────────────────
 const THEMES = {
   dark: {
@@ -273,60 +282,16 @@ function generateSCPXml(flowName, nodes, edges) {
 
 // ─── AI-powered flow parser (calls Claude API) ────────────────────────────────
 async function parseFlowWithAI(inputText, inputType) {
-  const systemPrompt = `You are an expert BnG SCP IVR flow designer. Given a description of an IVR flow (from PDF text, Visio description, or plain text), extract all nodes and connections and output a STRICT JSON object.
-
-RULES:
-- Every flow MUST start with a Start node and end with one or more Exit nodes
-- Node types MUST be one of: Start, Navigation, Play, Database, URL, Processing, Exit
-- Connections types MUST be one of: Normal, DTMF, DB
-- DTMF edges represent key presses (label = digit pressed or "Any"/"NoInput")
-- DB edges represent database result routing (label = result value like "active","new","parking","grace")
-- Normal edges represent unconditional flow
-- Assign grid positions: x increases left-to-right (step 250), y increases top-to-bottom (step 200)
-- Start node goes at x:400, y:50
-- Each node must have a unique string id (use short names like "start","welcome","menu1")
-- params object should contain relevant configuration for each node type
-
-Output ONLY valid JSON, no markdown, no explanation:
-{
-  "flowName": "string",
-  "nodes": [
-    {
-      "id": "start",
-      "type": "Start",
-      "label": "ServiceName",
-      "x": 400, "y": 50,
-      "params": {"calltype":"IVR","service":"MyService","shortcode":"12345","defaultlang":"_E","autoanswer":"true","exittimer":"0"}
-    },
-    {
-      "id": "welcome",
-      "type": "Navigation",
-      "label": "Welcome",
-      "x": 400, "y": 250,
-      "params": {"servicedescription":"Welcome","promptfile":"/IVR/welcome.wav","bargein":"true","timeout":"5","repeatcount":"2"}
-    }
-  ],
-  "edges": [
-    {"id":"e1","source":"start","target":"welcome","type":"Normal","label":""},
-    {"id":"e2","source":"welcome","target":"menu","type":"DTMF","label":"Any"}
-  ]
-}`;
-
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const resp = await fetch(`${API_BASE}/generate-scp-flow`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: `Input type: ${inputType}\n\nFlow description:\n${inputText}\n\nGenerate the SCP flow JSON.` }]
-    })
+    body: JSON.stringify({ doc_text: inputText })
   });
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error.message);
-  const text = data.content?.[0]?.text || "";
-  const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error(err.detail || "AI Generation failed");
+  }
+  return await resp.json();
 }
 
 // ─── Node metadata for diagram rendering ─────────────────────────────────────
@@ -374,7 +339,7 @@ const NODE_ROWS = {
   ],
   Exit: [],
 };
-const NW = 230, ROW_H = 15, HEADER_H = 40, FOOTER_H = 10, H_GAP = 65, V_GAP = 28;
+const NW = 260, ROW_H = 18, HEADER_H = 48, FOOTER_H = 12, H_GAP = 75, V_GAP = 35;
 function calcNodeH(type, params) {
   if (type === "Exit") return 44;
   if (NODE_META[type]?.diamond) return 76;
@@ -384,8 +349,15 @@ function calcNodeH(type, params) {
 
 // ─── XML Parser ───────────────────────────────────────────────────────────────
 function parseXML(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
-  if (doc.querySelector("parsererror")) throw new Error("Invalid XML");
+  const esc = s => (s || "").toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  // Fix malformed attribute spacing (common in older generated flows)
+  const sanitized = xmlText.trim().replace(/"([a-zA-Z0-9_-]+)=/g, '" $1=');
+  const doc = new DOMParser().parseFromString(sanitized, "application/xml");
+  const pErr = doc.querySelector("parsererror");
+  if (pErr) {
+    console.error("XML Parse Error:", pErr.textContent);
+    throw new Error("Invalid XML: " + pErr.textContent.split("\n")[0]);
+  }
   const rawNodes = [], edges = [], nodeIds = new Set();
   doc.querySelectorAll("mxCell").forEach(cell => {
     const id = (cell.getAttribute("id") || "").trim();
@@ -437,22 +409,22 @@ function SvgNode({ n, sel, onSel, th }) {
   const { x, y, w, h } = n, cx = x + w / 2;
   const rows = (NODE_ROWS[n.type] || []).map(r => { const v = n.params?.[r.key]; if (!v) return null; const f = r.fmt(v, n.params); return f ? { ...r, f } : null; }).filter(Boolean);
   const isRound = n.type === "Start" || n.type === "Exit";
-  if (meta.diamond) { const hw = w / 2 + 14, hh = h / 2, bcy = y + hh; return (<g onClick={() => onSel(n)} style={{ cursor: "pointer" }}><polygon points={`${cx},${y - 5} ${cx + hw},${bcy} ${cx},${y + h + 5} ${cx - hw},${bcy}`} fill={tc.bg} stroke={sel ? tc.c : tc.b} strokeWidth={sel ? 2.5 : 1.5} /><text x={cx} y={bcy - 13} textAnchor="middle" fill={tc.c} fontSize={10} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{meta.icon} {n.label.slice(0, 16)}</text><text x={cx} y={bcy + 2} textAnchor="middle" fill={th.textH2} fontSize={8} fontFamily="monospace" opacity={0.7}>{meta.label}</text>{rows[0] && <text x={cx} y={bcy + 16} textAnchor="middle" fill={tc.c} fontSize={7.5} fontFamily="monospace">{rows[0].icon} {rows[0].f.slice(0, 24)}</text>}</g>); }
+  if (meta.diamond) { const hw = w / 2 + 14, hh = h / 2, bcy = y + hh; return (<g onClick={() => onSel(n)} style={{ cursor: "pointer" }}><polygon points={`${cx},${y - 5} ${cx + hw},${bcy} ${cx},${y + h + 5} ${cx - hw},${bcy}`} fill={tc.bg} stroke={sel ? tc.c : tc.b} strokeWidth={sel ? 2.5 : 1.5} /><text x={cx} y={bcy - 13} textAnchor="middle" fill={tc.c} fontSize={18} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{meta.icon} {n.label.slice(0, 16)}</text><text x={cx} y={bcy + 2} textAnchor="middle" fill={th.textH2} fontSize={15} fontFamily="monospace" opacity={0.7}>{meta.label}</text>{rows[0] && <text x={cx} y={bcy + 16} textAnchor="middle" fill={tc.c} fontSize={14} fontFamily="monospace">{rows[0].icon} {rows[0].f.slice(0, 24)}</text>}</g>); }
   const lbl = n.label.length > 25 ? n.label.slice(0, 23) + "…" : n.label;
   return (<g onClick={() => onSel(n)} style={{ cursor: "pointer" }}>
     <rect x={x + 3} y={y + 3} width={w} height={h} rx={isRound ? h / 2 : 9} fill="rgba(0,0,0,0.18)" />
     <rect x={x} y={y} width={w} height={h} rx={isRound ? h / 2 : 9} fill={tc.bg} stroke={sel ? tc.c : tc.b} strokeWidth={sel ? 2.5 : 1.5} />
-    {isRound ? (<><text x={cx} y={y + h / 2 - 5} textAnchor="middle" fill={tc.c} fontSize={12} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{meta.icon} {lbl}</text><text x={cx} y={y + h / 2 + 10} textAnchor="middle" fill={th.textH3} fontSize={8} fontFamily="monospace">{meta.label}</text></>) : (<>
+    {isRound ? (<><text x={cx} y={y + h / 2 - 5} textAnchor="middle" fill={tc.c} fontSize={16} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{meta.icon} {lbl}</text><text x={cx} y={y + h / 2 + 10} textAnchor="middle" fill={th.textH3} fontSize={15} fontFamily="monospace">{meta.label}</text></>) : (<>
       <rect x={x} y={y} width={4} height={HEADER_H} rx={9} fill={tc.c} />
-      <text x={x + 14} y={y + 15} fill={tc.c} fontSize={11} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{lbl}</text>
+      <text x={x + 14} y={y + 15} fill={tc.c} fontSize={18} fontWeight="700" fontFamily="'JetBrains Mono',monospace">{lbl}</text>
       <rect x={x + 14} y={y + 21} width={meta.label.length * 6 + 10} height={13} rx={3} fill={tc.c + "22"} stroke={tc.c + "44"} strokeWidth={0.8} />
-      <text x={x + 18} y={y + 31} fill={th.textH2} fontSize={7.5} fontFamily="monospace" fontWeight="600">{meta.label}</text>
-      <text x={x + w - 6} y={y + 12} textAnchor="end" fill={th.textFaint} fontSize={7} fontFamily="monospace">#{n.id}</text>
+      <text x={x + 18} y={y + 31} fill={th.textH2} fontSize={14} fontFamily="monospace" fontWeight="600">{meta.label}</text>
+      <text x={x + w - 6} y={y + 12} textAnchor="end" fill={th.textFaint} fontSize={12} fontFamily="monospace">#{n.id}</text>
       <line x1={x + 4} y1={y + HEADER_H} x2={x + w} y2={y + HEADER_H} stroke={tc.c + "30"} strokeWidth={0.8} />
       {rows.map((row, i) => {
         const ry = y + HEADER_H + i * ROW_H; return (<g key={row.key}>
           {i % 2 === 0 && <rect x={x + 4} y={ry} width={w - 4} height={ROW_H} fill={th.rowAlt} />}
-          <text x={x + 9} y={ry + ROW_H - 4} fill={tc.c + "aa"} fontSize={8} fontFamily="monospace">{row.icon}</text>
+          <text x={x + 9} y={ry + ROW_H - 4} fill={tc.c + "aa"} fontSize={11} fontFamily="monospace">{row.icon}</text>
           <text x={x + 22} y={ry + ROW_H - 4} fill={th.textH3} fontSize={7} fontFamily="monospace">{row.label}</text>
           <line x1={x + 78} y1={ry + 3} x2={x + 78} y2={ry + ROW_H - 2} stroke={tc.c + "25"} strokeWidth={0.6} />
           <text x={x + 83} y={ry + ROW_H - 4} fill={th.textH1} fontSize={7.5} fontFamily="'JetBrains Mono',monospace" fontWeight="600">{row.f.length > 22 ? row.f.slice(0, 20) + "…" : row.f}</text>
@@ -468,9 +440,9 @@ function SvgEdge({ edge, nm, th }) {
   if (!s || !t) return null;
   const sx = s.x + s.w / 2, sy = s.y + s.h / 2, tx = t.x + t.w / 2, ty = t.y + t.h / 2;
   const color = th.edges[edge.etype] || "#446688";
-  if (edge.source === edge.target) { return (<g><path d={`M${sx + 18} ${sy - s.h / 2} A 36 24 0 1 1 ${sx - 18} ${sy - s.h / 2}`} fill="none" stroke={color} strokeWidth={1.5} markerEnd="url(#arr)" opacity={0.7} />{edge.label && <text x={sx} y={sy - s.h / 2 - 22} textAnchor="middle" fill={color} fontSize={8} fontFamily="monospace" fontWeight="700">{edge.label}</text>}</g>); }
+  if (edge.source === edge.target) { return (<g><path d={`M${sx + 18} ${sy - s.h / 2} A 36 24 0 1 1 ${sx - 18} ${sy - s.h / 2}`} fill="none" stroke={color} strokeWidth={1.5} markerEnd="url(#arr)" opacity={0.7} />{edge.label && <text x={sx} y={sy - s.h / 2 - 22} textAnchor="middle" fill={color} fontSize={11} fontFamily="monospace" fontWeight="700">{edge.label}</text>}</g>); }
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
-  return (<g><path d={`M${sx} ${sy} C${mx} ${sy},${mx} ${ty},${tx} ${ty}`} fill="none" stroke={color} strokeWidth={1.5} markerEnd="url(#arr)" opacity={0.7} />{edge.label && <text x={mx} y={my - 5} textAnchor="middle" fill={color} fontSize={8} fontFamily="'JetBrains Mono',monospace" fontWeight="700">{edge.label}</text>}</g>);
+  return (<g><path d={`M${sx} ${sy} C${mx} ${sy},${mx} ${ty},${tx} ${ty}`} fill="none" stroke={color} strokeWidth={1.5} markerEnd="url(#arr)" opacity={0.7} />{edge.label && <text x={mx} y={my - 5} textAnchor="middle" fill={color} fontSize={11} fontFamily="'JetBrains Mono',monospace" fontWeight="700">{edge.label}</text>}</g>);
 }
 
 // ─── Inspector ────────────────────────────────────────────────────────────────
@@ -481,7 +453,7 @@ function Inspector({ node, edges, nm, onClose, th }) {
   const outs = edges.filter(e => e.source === node.id);
   const ins = edges.filter(e => e.target === node.id);
   const visRows = (NODE_ROWS[node.type] || []).map(r => { const v = node.params?.[r.key]; if (!v) return null; const f = r.fmt(v, node.params); return f ? { ...r, f } : null; }).filter(Boolean);
-  const TH = ({ c }) => <th style={{ textAlign: "left", padding: "5px 8px", color: th.textH3, fontSize: 8, fontWeight: "600", letterSpacing: 1, borderBottom: `1px solid ${th.borderCol}`, background: th.rowHdr, fontFamily: "monospace", textTransform: "uppercase" }}>{c}</th>;
+  const TH = ({ c }) => <th style={{ textAlign: "left", padding: "5px 8px", color: th.textH3, fontSize: 11, fontWeight: "600", letterSpacing: 1, borderBottom: `1px solid ${th.borderCol}`, background: th.rowHdr, fontFamily: "monospace", textTransform: "uppercase" }}>{c}</th>;
   const TD = ({ c, col, mono }) => <td style={{ padding: "5px 8px", color: col || th.textH2, fontSize: 9, fontFamily: mono ? "'JetBrains Mono',monospace" : "inherit", wordBreak: "break-all", verticalAlign: "top" }}>{c}</td>;
   return (<div style={{ width: 285, background: th.panelBg, borderLeft: `1px solid ${th.borderCol}`, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 }}>
     <div style={{ padding: "12px 14px", borderBottom: `1px solid ${th.borderCol}`, background: `linear-gradient(135deg,${tc.bg},${th.panelBg})` }}>
@@ -489,7 +461,7 @@ function Inspector({ node, edges, nm, onClose, th }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <div style={{ width: 32, height: 32, borderRadius: 7, background: tc.bg, border: `2px solid ${tc.b}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: tc.c }}>{meta.icon}</div>
           <div>
-            <div style={{ fontSize: 12, fontWeight: "700", color: tc.c, fontFamily: "monospace", maxWidth: 170, wordBreak: "break-word" }}>{node.label || "(unnamed)"}</div>
+            <div style={{ fontSize: 15, fontWeight: "700", color: tc.c, fontFamily: "monospace", maxWidth: 170, wordBreak: "break-word" }}>{node.label || "(unnamed)"}</div>
             <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
               <span style={{ fontSize: 7, padding: "2px 7px", borderRadius: 3, background: tc.c + "22", border: `1px solid ${tc.c}44`, color: tc.c, fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1 }}>{meta.label}</span>
               <span style={{ fontSize: 7, padding: "2px 7px", borderRadius: 3, background: th.borderCol, color: th.textH3, fontFamily: "monospace" }}>#{node.id}</span>
@@ -501,21 +473,21 @@ function Inspector({ node, edges, nm, onClose, th }) {
     </div>
     <div style={{ flex: 1, overflow: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
       {visRows.length > 0 && (<div>
-        <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 6, fontFamily: "monospace" }}>Configuration</div>
+        <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 6, fontFamily: "monospace" }}>Configuration</div>
         <table style={{ width: "100%", borderCollapse: "collapse", border: `1px solid ${th.borderCol}`, borderRadius: 6, overflow: "hidden" }}>
           <thead><tr><TH c="Field" /><TH c="Value" /></tr></thead>
           <tbody>{visRows.map((row, i) => (<tr key={row.key} style={{ background: i % 2 === 0 ? "transparent" : th.rowAlt }}><TD c={`${row.icon} ${row.label}`} col={th.textH3} /><TD c={row.f} col={th.textH1} mono /></tr>))}</tbody>
         </table>
       </div>)}
       {outs.length > 0 && (<div>
-        <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 5, fontFamily: "monospace" }}>Goes To ({outs.length})</div>
+        <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 5, fontFamily: "monospace" }}>Goes To ({outs.length})</div>
         <table style={{ width: "100%", borderCollapse: "collapse", border: `1px solid ${th.borderCol}`, borderRadius: 5, overflow: "hidden" }}>
           <thead><tr><TH c="Trigger" /><TH c="Type" /><TH c="Node" /></tr></thead>
           <tbody>{outs.map((e, i) => { const tn = nm[e.target]; const ec = th.edges[e.etype] || th.textH3; const tc2 = tn ? th.nodeTypes[tn.type] || th.nodeTypes.Navigation : null; return (<tr key={e.id} style={{ background: i % 2 === 0 ? "transparent" : th.rowAlt }}><TD c={e.label || "(auto)"} col={ec} mono /><TD c={<span style={{ fontSize: 7, padding: "1px 5px", borderRadius: 2, background: ec + "22", color: ec, fontFamily: "monospace" }}>{e.etype}</span>} /><TD c={`${NODE_META[tn?.type]?.icon || ""} ${tn?.label || "?"}`} col={tc2?.c || th.textH2} mono /></tr>); })}</tbody>
         </table>
       </div>)}
       {ins.length > 0 && (<div>
-        <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 5, fontFamily: "monospace" }}>Comes From ({ins.length})</div>
+        <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", marginBottom: 5, fontFamily: "monospace" }}>Comes From ({ins.length})</div>
         <table style={{ width: "100%", borderCollapse: "collapse", border: `1px solid ${th.borderCol}`, borderRadius: 5, overflow: "hidden" }}>
           <thead><tr><TH c="Trigger" /><TH c="Type" /><TH c="Node" /></tr></thead>
           <tbody>{ins.map((e, i) => { const sn = nm[e.source]; const ec = th.edges[e.etype] || th.textH3; const sc = sn ? th.nodeTypes[sn.type] || th.nodeTypes.Navigation : null; return (<tr key={e.id} style={{ background: i % 2 === 0 ? "transparent" : th.rowAlt }}><TD c={e.label || "(auto)"} col={ec} mono /><TD c={<span style={{ fontSize: 7, padding: "1px 5px", borderRadius: 2, background: ec + "22", color: ec, fontFamily: "monospace" }}>{e.etype}</span>} /><TD c={`${NODE_META[sn?.type]?.icon || ""} ${sn?.label || "?"}`} col={sc?.c || th.textH2} mono /></tr>); })}</tbody>
@@ -537,13 +509,13 @@ function PromptsTab({ nodes, th }) {
   }), [nodes, filter, typeFilter]);
   const nc = nodes.filter(n => n.type === "Navigation" && n.params?.promptfile).length;
   const pc = nodes.filter(n => n.type === "Play" && n.params?.contentlist).length;
-  const TH = ({ c, w }) => <th style={{ textAlign: "left", padding: "7px 10px", color: th.textH3, fontSize: 8, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "monospace", background: th.rowHdr, borderBottom: `2px solid ${th.borderCol}`, whiteSpace: "nowrap", minWidth: w || "auto" }}>{c}</th>;
+  const TH = ({ c, w }) => <th style={{ textAlign: "left", padding: "7px 10px", color: th.textH3, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "monospace", background: th.rowHdr, borderBottom: `2px solid ${th.borderCol}`, whiteSpace: "nowrap", minWidth: w || "auto" }}>{c}</th>;
   return (<div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
     <div style={{ padding: "10px 18px", borderBottom: `1px solid ${th.borderCol}`, background: th.headerBg, display: "flex", gap: 10, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
-      {[["All", nc + pc, "#60a5fa"], ["Navigation", nc, "#60a5fa"], ["Play", pc, "#2dd4bf"]].map(([l, v, c]) => (<div key={l} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6, background: th.rowHdr, border: `1px solid ${th.borderCol}` }}><span style={{ fontSize: 15, fontWeight: "700", color: c, fontFamily: "monospace" }}>{v}</span><span style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>{l}</span></div>))}
+      {[["All", nc + pc, "#60a5fa"], ["Navigation", nc, "#60a5fa"], ["Play", pc, "#2dd4bf"]].map(([l, v, c]) => (<div key={l} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6, background: th.rowHdr, border: `1px solid ${th.borderCol}` }}><span style={{ fontSize: 18, fontWeight: "700", color: c, fontFamily: "monospace" }}>{v}</span><span style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>{l}</span></div>))}
       <div style={{ flex: 1 }} />
       {["All", "Navigation", "Play"].map(t => (<button key={t} onClick={() => setTypeFilter(t)} style={{ padding: "5px 11px", borderRadius: 5, border: `1px solid ${typeFilter === t ? "#3b82f6" : th.borderCol}`, background: typeFilter === t ? "rgba(59,130,246,0.1)" : "transparent", color: typeFilter === t ? "#60a5fa" : th.textH3, fontSize: 9, fontFamily: "monospace", cursor: "pointer", fontWeight: typeFilter === t ? "700" : "400" }}>{t === "All" ? "All" : t === "Navigation" ? "♪ Nav" : "▶▶ Play"}</button>))}
-      <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search…" style={{ padding: "6px 11px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: th.rowHdr, color: th.textH1, fontSize: 10, fontFamily: "monospace", width: 180, outline: "none" }} />
+      <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search…" style={{ padding: "6px 11px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: th.rowHdr, color: th.textH1, fontSize: 12, fontFamily: "monospace", width: 180, outline: "none" }} />
     </div>
     <div style={{ flex: 1, overflow: "auto" }}>
       {promptNodes.length === 0 ? (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", flexDirection: "column", gap: 8, color: th.textH3 }}><div style={{ fontSize: 28 }}>🎵</div><div style={{ fontSize: 11, fontFamily: "monospace" }}>No prompts found</div></div>) : (
@@ -557,7 +529,7 @@ function PromptsTab({ nodes, th }) {
             const td = (ch, col, mono, sm) => <td style={{ padding: "8px 10px", color: col || th.textH2, fontFamily: mono ? "'JetBrains Mono',monospace" : "inherit", fontSize: sm ? 8 : 9.5, borderBottom: `1px solid ${th.borderCol}`, verticalAlign: "middle", wordBreak: "break-all" }}>{ch}</td>;
             return (<tr key={n.id} style={{ background: i % 2 === 0 ? "transparent" : th.rowAlt }}>
               {td(i + 1, th.textH3, false, true)}
-              {td(<span style={{ padding: "2px 7px", borderRadius: 4, background: tc.c + "20", border: `1px solid ${tc.c}44`, color: tc.c, fontFamily: "monospace", fontSize: 8, whiteSpace: "nowrap" }}>{meta.icon} {n.type}</span>)}
+              {td(<span style={{ padding: "2px 7px", borderRadius: 4, background: tc.c + "20", border: `1px solid ${tc.c}44`, color: tc.c, fontFamily: "monospace", fontSize: 11, whiteSpace: "nowrap" }}>{meta.icon} {n.type}</span>)}
               {td(n.label, th.textH1, true)}
               {td("#" + n.id, th.textH3, true, true)}
               {td(filename === "1" ? "(not set)" : filename, filename === "1" ? th.textH3 : th.textH1, true)}
@@ -570,7 +542,7 @@ function PromptsTab({ nodes, th }) {
         </table>
       )}
     </div>
-    <div style={{ padding: "6px 18px", borderTop: `1px solid ${th.borderCol}`, background: th.headerBg, fontSize: 8, color: th.textH3, fontFamily: "monospace" }}>Showing {promptNodes.length} of {nc + pc} prompt nodes</div>
+    <div style={{ padding: "6px 18px", borderTop: `1px solid ${th.borderCol}`, background: th.headerBg, fontSize: 11, color: th.textH3, fontFamily: "monospace" }}>Showing {promptNodes.length} of {nc + pc} prompt nodes</div>
   </div>);
 }
 
@@ -602,9 +574,15 @@ function bNodeToXml(n) {
   const XMLPARAMS = { Navigation: "x|mxgraph/NP.html", Play: "x|mxgraph/PlayContent.html", Start: "x", Database: "x", URL: "x", Processing: "x", DigitCollect: "x", StartRecord: "x", Transfer: "x" };
   const XMLFILE = { Navigation: "", Play: "" };
   const style = STYLES[n.type] || STYLES.Navigation;
-  const xpd = XMLPARAMS[n.type] ? ` xmlParamsData="${XMLPARAMS[n.type]}"` : "";
-  const xfd = XMLFILE[n.type] !== undefined ? ` xmlFileData="${XMLFILE[n.type]}"` : ` `;
-  if (n.type === "Exit") return `  <mxCell id="${n.id}" value="${n.label || ""}" style="${style}" parent="1" vertex="1" imageName="Exit" type="Exit">\n    <mxGeometry x="${Math.round(n.x)}" y="${Math.round(n.y)}" width="100" height="100" as="geometry"/>\n  </mxCell>`;
+  
+  const xpd = XMLPARAMS[n.type] ? `xmlParamsData="${XMLPARAMS[n.type]}"` : "";
+  const xfd = XMLFILE[n.type] !== undefined ? `xmlFileData="${XMLFILE[n.type]}"` : "";
+  const esc = s => (s || "").toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  
+  if (n.type === "Exit") {
+    const exitAttrs = [`id="${n.id}"`, `value="${esc(n.label)}"`, `style="${style}"`, `parent="1"`, `vertex="1"`, `imageName="Exit"`, `type="Exit"`].join(" ");
+    return `  <mxCell ${exitAttrs}>\n    <mxGeometry x="${Math.round(n.x)}" y="${Math.round(n.y)}" width="100" height="100" as="geometry"/>\n  </mxCell>`;
+  }
   const FIELDS = {
     Start: [["servicedescription", "Description", "textbox", n.label], ["calltype", "Call Type", "select", n.params?.calltype || "IVR"], ["exittimer", "Exit Timer", "textbox", "0"], ["service", "Service Name", "textbox", n.params?.service || ""], ["shortcode", "Short Code", "textbox", n.params?.shortcode || ""], ["autoanswer", "Auto Answer", "checkbox", "true"], ["defaultlang", "Default Language", "select", n.params?.defaultlang || "_E"]],
     Navigation: [["servicedescription", "Description", "textbox", n.label], ["promptfile", "File/s", "selectmul", n.params?.promptfile || ""], ["bargein", "Barge In", "checkbox", "true"], ["voicedetection", "Voice Detection", "checkbox", "false"], ["timeout", "Timeout (sec)", "textbox", n.params?.timeout || "0"], ["repeatcount", "Repeat Count", "textbox", n.params?.repeatcount || "0"]],
@@ -617,17 +595,43 @@ function bNodeToXml(n) {
     Transfer: [["servicedescription", "Description", "textbox", n.label]],
   };
   const fields = FIELDS[n.type] || FIELDS.Navigation;
-  const recs = fields.map(([k, pn, pt, v]) => bRecBlock(k, pn, pt, v)).join("\n");
-  return `  <mxCell id="${n.id}" value="${n.label || ""}" style="${style}" parent="1" vertex="1" imageName="${n.type}"${xfd}type="${n.type}"${xpd}>\n    <mxGeometry x="${Math.round(n.x)}" y="${Math.round(n.y)}" width="100" height="100" as="geometry"/>\n    <mxParams as="params">\n      <recs>\n${recs}\n      </recs>\n    </mxParams>\n  </mxCell>`;
+  const recs = fields.map(([k, pn, pt, v]) => bRecBlock(k, pn, pt, esc(v))).join("\n");
+  const nodeAttrs = [
+    `id="${n.id}"`,
+    `value="${esc(n.label)}"`,
+    `style="${style}"`,
+    `parent="1"`,
+    `vertex="1"`,
+    `imageName="${n.type}"`,
+    xfd,
+    `type="${n.type}"`,
+    xpd
+  ].filter(Boolean).join(" ");
+
+  return `  <mxCell ${nodeAttrs}>\n    <mxGeometry x="${Math.round(n.x)}" y="${Math.round(n.y)}" width="100" height="100" as="geometry"/>\n    <mxParams as="params">\n      <recs>\n${recs}\n      </recs>\n    </mxParams>\n  </mxCell>`;
 }
 function bEdgeToXml(e) {
   const ecol = { DTMF: "green", DB: "red", Normal: "grey" }[e.type] || "grey";
   const style = `edgeStyle=elbowEdgeStyle;elbow=horizontal;strokeWidth=3;strokeColor=${ecol};exitX=1;exitY=0.5;entryX=0;entryY=0.5`;
-  const xpd = e.type !== "Normal" ? ' xmlParamsData="x"' : "";
+  const xpd = e.type !== "Normal" ? `xmlParamsData="x"` : "";
+  const esc = (s) => (s || "").toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   let px = "";
-  if (e.type === "DTMF") px = `\n    <mxParams as="params"><recs>\n${bRecBlock("value", "Display", "textbox", e.label)}\n${bRecBlock("dtmf", "DTMF", "select", e.label || "Any")}\n    </recs></mxParams>`;
-  else if (e.type === "DB") px = `\n    <mxParams as="params"><recs>\n${bRecBlock("value", "Display", "textbox", e.label)}\n${bRecBlock("dbconnector", "DB Connector", "select", "GetUserDetail")}\n    </recs></mxParams>`;
-  return `  <mxCell id="${e.id}" value="${e.label || ""}" style="${style}" parent="1" source="${e.source}" target="${e.target}" edge="1" type="${e.type}"${xpd}>\n    <mxGeometry x="0" y="0" width="100" height="100" as="geometry"><mxPoint as="sourcePoint"/><mxPoint as="targetPoint"/></mxGeometry>${px}\n  </mxCell>`;
+  if (e.type === "DTMF") px = `\n    <mxParams as="params"><recs>\n${bRecBlock("value", "Display", "textbox", esc(e.label))}\n${bRecBlock("dtmf", "DTMF", "select", esc(e.label) || "Any")}\n    </recs></mxParams>`;
+  else if (e.type === "DB") px = `\n    <mxParams as="params"><recs>\n${bRecBlock("value", "Display", "textbox", esc(e.label))}\n${bRecBlock("dbconnector", "DB Connector", "select", "GetUserDetail")}\n    </recs></mxParams>`;
+  
+  const edgeAttrs = [
+    `id="${e.id}"`,
+    `value="${esc(e.label)}"`,
+    `style="${style}"`,
+    `parent="1"`,
+    `source="${e.source}"`,
+    `target="${e.target}"`,
+    `edge="1"`,
+    `type="${e.type}"`,
+    xpd
+  ].filter(Boolean).join(" ");
+
+  return `  <mxCell ${edgeAttrs}>\n    <mxGeometry x="0" y="0" width="100" height="100" as="geometry"><mxPoint as="sourcePoint"/><mxPoint as="targetPoint"/></mxGeometry>${px}\n  </mxCell>`;
 }
 function buildXML(nodes, edges) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<mxGraphModel scale="0.694" grid="1" guides="1" tooltips="1" connect="1" fold="1" page="0" pageScale="1" pageWidth="826" pageHeight="1169">\n  <root>\n    <mxCell id="0"/>\n    <mxCell id="1" parent="0"/>\n${nodes.map(bNodeToXml).join("\n")}\n${edges.map(bEdgeToXml).join("\n")}\n  </root>\n</mxGraphModel>`;
@@ -716,7 +720,7 @@ function buildMagicVoiceFlow() {
 
 
 function FlowBuilderTab({ th }) {
-  const NW = 160, NH = 56;
+  const NW = 200, NH = 70;
   const COLS = {
     Start: "#34d399", Exit: "#f87171", Navigation: "#60a5fa", Play: "#2dd4bf",
     Database: "#fbbf24", URL: "#4ade80", Processing: "#c084fc", DigitCollect: "#fb923c",
@@ -813,28 +817,64 @@ function FlowBuilderTab({ th }) {
 
       setPdfStatus("parsing");
 
-      // ── Step 2: Call Backend API with extracted text ──────────────────
-      const API_BASE = "http://localhost:8000"; // Fallback base
+      const SYSTEM = `You are an expert BnG SCP IVR flow designer. Given an IVR flow description, extract all nodes and connections and return ONLY valid JSON — no markdown, no explanation, no code blocks.
+
+Node types MUST be one of: Start, Navigation, Play, Database, URL, Processing, Exit, DigitCollect, StartRecord, Transfer
+Edge types MUST be one of: DTMF, DB, Normal
+- DTMF = key press routing (label = digit pressed: "1","2","Any","NoInput","#")
+- DB = database result routing (label = result value: "active","new","grace","parking")
+- Normal = unconditional flow (label = "")
+
+Layout rules:
+- Start node at x:400 y:50
+- Each layer ~200px below the previous
+- Sibling nodes spread ~280px apart horizontally
+- Every node must have unique short id (letters/numbers only, no spaces)
+
+Return ONLY this JSON structure, nothing else:
+{
+  "flowName": "ServiceName",
+  "nodes": [
+    {"id":"start","type":"Start","label":"ServiceName","x":400,"y":50,"params":{"calltype":"IVR","service":"ServiceName","shortcode":"","defaultlang":"_E"}},
+    {"id":"lang","type":"Navigation","label":"Language_Selection","x":400,"y":250,"params":{"promptfile":"/IVR/lang.wav","timeout":"5","repeatcount":"1","bargein":"true"}}
+  ],
+  "edges": [
+    {"id":"e1","source":"start","target":"lang","type":"Normal","label":""},
+    {"id":"e2","source":"lang","target":"menu","type":"DTMF","label":"1"}
+  ]
+}`;
+
       const resp = await fetch(`${API_BASE}/generate-scp-flow`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          doc_text: `Here is the IVR flow content extracted from "${file.name}":\n\n${pdfText.slice(0, 15000)}`
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doc_text: pdfText })
       });
 
       if (!resp.ok) {
-        const errJson = await resp.json().catch(() => ({ detail: "Network Error" }));
-        throw new Error(errJson.detail || `Server error ${resp.status}`);
+        const errText = await resp.text();
+        throw new Error(`API error ${resp.status}: ${errText.slice(0, 300)}`);
       }
 
-      const flow = await resp.json();
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
-      if (!flow || !flow.nodes || !flow.nodes.length) {
-        throw new Error("AI could not extract nodes from this document. Please try a different file.");
+      // The backend returns the flow JSON directly now (cleansed by OBDPromptAgent)
+      let flow = data;
+      
+      // If the response is wrapped in an Anthropic-style 'content' array (fallback), extract it
+      if (data.content && Array.isArray(data.content)) {
+        const rawText = data.content.find(c => c.type === "text")?.text || "";
+        if (!rawText) throw new Error("Empty response from API");
+        const cleanText = rawText.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+        try { flow = JSON.parse(cleanText); } catch (e) {
+             const match = rawText.match(/\{[\s\S]+\}/);
+             if (match) flow = JSON.parse(match[0]);
+             else throw new Error("Could not parse JSON from content: " + rawText.slice(0, 100));
+        }
       }
+
+      if (!flow || !flow.nodes?.length) throw new Error("No nodes found in AI response.");
+
 
       // ── Step 3: Map to internal node format ────────────────────────────
       const idMap = {};
@@ -981,7 +1021,7 @@ function FlowBuilderTab({ th }) {
   const liveSel = sel ? nodes.find(n => n.id === sel.id) : null;
 
   // ── render ────────────────────────────────────────────────────────────────
-  const btnBase = { fontSize: 10, padding: "4px 10px", borderRadius: 5, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontFamily: "monospace" };
+  const btnBase = { fontSize: 12, padding: "4px 10px", borderRadius: 5, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontFamily: "monospace" };
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: th.appBg }}>
@@ -989,15 +1029,21 @@ function FlowBuilderTab({ th }) {
       {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderBottom: `1px solid ${th.borderCol}`, background: th.headerBg, flexShrink: 0, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, fontWeight: "700", color: th.textH1, marginRight: 4 }}>⚒ Flow Builder</span>
+        {/* PDF Upload — always visible, prominent */}
         <button onClick={() => pdfRef.current?.click()}
+          disabled={pdfStatus === "reading" || pdfStatus === "parsing"}
           style={{
-            ...btnBase, border: `1px solid ${pdfStatus === "parsing" || pdfStatus === "reading" ? "#3b82f6" : th.borderCol}`,
-            color: pdfStatus === "parsing" || pdfStatus === "reading" ? "#60a5fa" : th.textH2, fontWeight: "600"
+            display: "flex", alignItems: "center", gap: 6, padding: "5px 14px", borderRadius: 6,
+            border: `1px solid ${pdfStatus === "parsing" || pdfStatus === "reading" ? "#3b82f6" : "rgba(59,130,246,0.5)"}`,
+            background: pdfStatus === "parsing" || pdfStatus === "reading" ? "rgba(59,130,246,0.1)" : "rgba(59,130,246,0.08)",
+            color: pdfStatus === "parsing" || pdfStatus === "reading" ? "#60a5fa" : "#60a5fa",
+            cursor: pdfStatus === "parsing" || pdfStatus === "reading" ? "wait" : "pointer",
+            fontFamily: "monospace", fontSize: 12, fontWeight: "700"
           }}>
-          {pdfStatus === "reading" ? "⏳ Reading PDF…" : pdfStatus === "parsing" ? "⚙ Parsing flow…" : "📄 Upload PDF Flow"}
+          {pdfStatus === "reading" ? "⏳ Reading…" : pdfStatus === "parsing" ? "⚙ Parsing…" : "📄 Upload PDF Flow"}
         </button>
         <input ref={pdfRef} type="file" accept=".pdf" style={{ display: "none" }}
-          onChange={e => e.target.files[0] && handlePdfFile(e.target.files[0])} />
+          onChange={e => { if (e.target.files[0]) handlePdfFile(e.target.files[0]); e.target.value = ""; }} />
         <button onClick={() => { setNodes([]); setEdges([]); setSel(null); setConnFrom(null); setConnect(false); setPdfStatus(null); setPdfName(""); }} style={btnBase}>Clear</button>
         <span style={{ width: 1, height: 16, background: th.borderCol, display: "inline-block" }} />
         <button onClick={() => { setConnect(c => !c); setConnFrom(null); }} style={{ ...btnBase, border: `1px solid ${connecting ? "#3b82f6" : th.borderCol}`, background: connecting ? "rgba(59,130,246,0.15)" : "transparent", color: connecting ? "#60a5fa" : th.textH3, fontWeight: connecting ? "700" : "400" }}>
@@ -1013,22 +1059,69 @@ function FlowBuilderTab({ th }) {
           {pdfName && <span style={{ color: th.textH3, marginRight: 8 }}>📄 {pdfName}</span>}
           {nodes.length} nodes · {edges.length} edges
         </span>
-        <button onClick={() => { const xml = buildXML(nodes, edges); const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([xml], { type: "application/xml" })); a.download = "SCP_Flow.xml"; a.click(); }}
-          style={{ fontSize: 10, padding: "5px 14px", borderRadius: 6, border: "none", background: "linear-gradient(135deg,#059669,#0d9488)", color: "#fff", cursor: "pointer", fontFamily: "monospace", fontWeight: "700" }}>
+        <button onClick={() => {
+          const xml = buildXML(nodes, edges);
+          // Save to DB
+          const startN = nodes.find(n => n.type === "Start");
+          dbSave({
+            flowName: startN?.params?.service || startN?.label || "Builder_Flow",
+            serviceName: startN?.params?.service || null,
+            shortCode: startN?.params?.shortcode || null,
+            callType: startN?.params?.calltype || "IVR",
+            defaultLang: startN?.params?.defaultlang || "_E",
+            source: "builder", filename: "SCP_Flow.xml",
+            xmlContent: xml, nodes, edges,
+          });
+          // Download
+          const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([xml], { type: "application/xml" })); a.download = "SCP_Flow.xml"; a.click();
+        }}
+          style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", background: "linear-gradient(135deg,#059669,#0d9488)", color: "#fff", cursor: "pointer", fontFamily: "monospace", fontWeight: "700" }}>
           ⬇ Download XML
         </button>
       </div>
 
+      {/* PDF status strip */}
+      {(pdfStatus === "reading" || pdfStatus === "parsing") && (
+        <div style={{ padding: "6px 14px", borderBottom: `1px solid ${th.borderCol}`, background: "rgba(59,130,246,0.08)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", flexShrink: 0, opacity: 0.9 }} />
+          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#60a5fa", fontWeight: "600" }}>
+            {pdfStatus === "reading" ? "⏳ Reading PDF…" : "⚙ Parsing IVR flow with AI…"}
+          </span>
+          {pdfName && <span style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>· {pdfName}</span>}
+        </div>
+      )}
+      {pdfStatus === "done" && nodes.length > 0 && (
+        <div style={{ padding: "5px 14px", borderBottom: `1px solid ${th.borderCol}`, background: "rgba(52,211,153,0.07)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#34d399", fontWeight: "600" }}>✓ Flow generated from PDF</span>
+          {pdfName && <span style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>· {pdfName}</span>}
+          <button onClick={() => pdfRef.current?.click()}
+            style={{ marginLeft: 8, padding: "2px 10px", borderRadius: 4, border: "1px solid rgba(59,130,246,0.4)", background: "transparent", color: "#60a5fa", cursor: "pointer", fontSize: 9, fontFamily: "monospace" }}>
+            📄 Upload another PDF
+          </button>
+          <button onClick={() => { setPdfStatus(null); setPdfName(""); }} style={{ marginLeft: "auto", background: "none", border: "none", color: th.textH3, cursor: "pointer", fontSize: 13 }}>✕</button>
+        </div>
+      )}
+      {pdfStatus === "error" && (
+        <div style={{ padding: "5px 14px", borderBottom: `1px solid ${th.borderCol}`, background: "rgba(248,113,113,0.08)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#f87171", fontWeight: "600" }}>✗ PDF parse failed</span>
+          <span style={{ fontSize: 9, color: "#f87171aa", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pdfErr}</span>
+          <button onClick={() => pdfRef.current?.click()}
+            style={{ padding: "2px 10px", borderRadius: 4, border: "1px solid rgba(248,113,113,0.4)", background: "transparent", color: "#f87171", cursor: "pointer", fontSize: 9, fontFamily: "monospace" }}>
+            Try again
+          </button>
+          <button onClick={() => { setPdfStatus(null); setPdfErr(""); }} style={{ background: "none", border: "none", color: th.textH3, cursor: "pointer", fontSize: 13 }}>✕</button>
+        </div>
+      )}
+
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
-        {/* Palette */}
         <div style={{ width: 142, flexShrink: 0, background: th.headerBg, borderRight: `1px solid ${th.borderCol}`, overflowY: "auto", padding: "8px 6px" }}>
           {[{ l: "Flow", items: ["Start", "Exit"] }, { l: "Audio", items: ["Navigation", "Play"] }, { l: "Logic", items: ["Database", "URL", "Processing"] }, { l: "Input", items: ["DigitCollect", "StartRecord", "Transfer"] }].map(g => (
             <div key={g.l} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 5, padding: "0 4px", fontFamily: "monospace" }}>{g.l}</div>
+              <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 5, padding: "0 4px", fontFamily: "monospace" }}>{g.l}</div>
               {g.items.map(type => (
                 <div key={type} draggable onDragStart={e => e.dataTransfer.setData("nodeType", type)}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 7px", borderRadius: 5, border: `0.5px solid ${th.borderCol}`, background: th.rowHdr, marginBottom: 4, cursor: "grab", fontSize: 10, color: th.textH2, userSelect: "none", fontFamily: "monospace" }}>
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 7px", borderRadius: 5, border: `0.5px solid ${th.borderCol}`, background: th.rowHdr, marginBottom: 4, cursor: "grab", fontSize: 12, color: th.textH2, userSelect: "none", fontFamily: "monospace" }}>
                   <div style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, background: COLS[type] || "#888" }} />
                   {type}
                 </div>
@@ -1036,7 +1129,7 @@ function FlowBuilderTab({ th }) {
             </div>
           ))}
           <div style={{ padding: "6px 4px", borderTop: `1px solid ${th.borderCol}`, marginTop: 4 }}>
-            <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 1, fontFamily: "monospace", marginBottom: 5, textTransform: "uppercase" }}>Edges</div>
+            <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 1, fontFamily: "monospace", marginBottom: 5, textTransform: "uppercase" }}>Edges</div>
             {Object.entries(ECOLS).map(([k, c]) => (
               <div key={k} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4 }}>
                 <div style={{ width: 12, height: 2, background: c, borderRadius: 1 }} />
@@ -1081,7 +1174,7 @@ function FlowBuilderTab({ th }) {
                     <path d={ep.d} fill="none" stroke={col} strokeWidth={2} opacity={0.85} />
                     {ah && <path d={ah} fill={col} />}
                     {e.label && <text x={ep.mx} y={ep.my} textAnchor="middle"
-                      style={{ fontSize: 10, fontFamily: "monospace", fontWeight: "600", fill: col }}>{e.label}</text>}
+                      style={{ fontSize: 12, fontFamily: "monospace", fontWeight: "600", fill: col }}>{e.label}</text>}
                   </g>
                 );
               })}
@@ -1102,7 +1195,7 @@ function FlowBuilderTab({ th }) {
                     {!isRound && <rect x={n.x} y={n.y + 8} width={4} height={NH - 16} rx={2} fill={c} />}
                     <text x={isRound ? n.x + NW / 2 : n.x + 13} y={n.y + NH * 0.37} dominantBaseline="middle"
                       textAnchor={isRound ? "middle" : "start"}
-                      style={{ fontSize: 12, fontFamily: "monospace", fontWeight: "600", fill: c, pointerEvents: "none" }}>
+                      style={{ fontSize: 15, fontFamily: "monospace", fontWeight: "600", fill: c, pointerEvents: "none" }}>
                       {lbl}
                     </text>
                     <text x={isRound ? n.x + NW / 2 : n.x + 13} y={n.y + NH * 0.67} dominantBaseline="middle"
@@ -1127,80 +1220,57 @@ function FlowBuilderTab({ th }) {
               onDrop={e => { e.preventDefault(); setPdfDrop(false); const f = e.dataTransfer.files?.[0]; if (f) handlePdfFile(f); }}
               style={{
                 position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", gap: 12, pointerEvents: "auto",
-                background: pdfDrop ? "rgba(59,130,246,0.06)" : "transparent",
-                transition: "background .15s"
+                alignItems: "center", justifyContent: "center", gap: 14, pointerEvents: "auto",
+                background: pdfDrop ? "rgba(59,130,246,0.06)" : "transparent", transition: "background .15s"
               }}>
               {pdfStatus === "reading" || pdfStatus === "parsing" ? (
                 <>
-                  <div style={{ fontSize: 28, opacity: 0.5 }}>⚙</div>
-                  <div style={{ fontSize: 12, color: th.textH2, fontWeight: "600" }}>
+                  <div style={{ fontSize: 32, opacity: 0.4, animation: "spin 2s linear infinite" }}>⚙</div>
+                  <div style={{ fontSize: 13, color: th.textH2, fontWeight: "600" }}>
                     {pdfStatus === "reading" ? "Reading PDF…" : "Parsing IVR flow with AI…"}
                   </div>
                   <div style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>{pdfName}</div>
+                  <div style={{ fontSize: 9, color: th.textFaint }}>This may take a few seconds…</div>
                 </>
-              ) : pdfStatus === "error" ? (
-                <>
-                  <div style={{ fontSize: 24, opacity: 0.5 }}>⚠</div>
-                  <div style={{ fontSize: 12, color: "#f87171", fontWeight: "600", marginBottom: 4 }}>Parse failed</div>
-                  <div style={{
-                    fontSize: 9, color: "#f87171", fontFamily: "monospace", maxWidth: 440, textAlign: "left",
-                    padding: "8px 12px", borderRadius: 6, background: "rgba(248,113,113,0.08)",
-                    border: "1px solid rgba(248,113,113,0.25)", wordBreak: "break-word", lineHeight: 1.7, whiteSpace: "pre-wrap"
-                  }}>
-                    {pdfErr || "Unknown error"}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                    <button onClick={() => pdfRef.current?.click()}
-                      style={{
-                        padding: "6px 16px", borderRadius: 6, border: "1px solid rgba(248,113,113,0.4)",
-                        background: "rgba(248,113,113,0.1)", color: "#f87171", cursor: "pointer", fontSize: 10, fontFamily: "monospace"
-                      }}>
-                      Try again
-                    </button>
-                    <button onClick={() => { setPdfStatus(null); setPdfErr(""); }}
-                      style={{
-                        padding: "6px 16px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-                        background: "transparent", color: "#888", cursor: "pointer", fontSize: 10, fontFamily: "monospace"
-                      }}>
-                      Dismiss
-                    </button>
-                  </div>
-                </>
-
               ) : (
                 <>
                   <div style={{
-                    width: 80, height: 80, borderRadius: 12,
+                    width: 90, height: 90, borderRadius: 14,
                     border: `2px dashed ${pdfDrop ? "#3b82f6" : th.borderCol}`,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 32, opacity: pdfDrop ? 0.9 : 0.3, transition: "all .15s",
+                    fontSize: 36, opacity: pdfDrop ? 1 : 0.25, transition: "all .2s",
                     background: pdfDrop ? "rgba(59,130,246,0.08)" : "transparent"
                   }}>📄</div>
-                  <div style={{ fontSize: 13, color: th.textH2, fontWeight: "600" }}>
-                    {pdfDrop ? "Drop to parse flow" : "Drop your IVR flow PDF here"}
+                  <div style={{ fontSize: 14, color: th.textH2, fontWeight: "700" }}>
+                    {pdfDrop ? "Drop to parse" : "Drop your IVR flow PDF here"}
                   </div>
-                  <div style={{ fontSize: 10, color: th.textH3 }}>or</div>
+                  <div style={{ fontSize: 12, color: th.textH3 }}>or</div>
                   <button onClick={() => pdfRef.current?.click()}
                     style={{
-                      padding: "7px 20px", borderRadius: 7, border: "1px solid rgba(59,130,246,0.4)",
+                      padding: "8px 24px", borderRadius: 8, border: "1px solid rgba(59,130,246,0.5)",
                       background: "rgba(59,130,246,0.12)", color: "#60a5fa", cursor: "pointer",
-                      fontSize: 11, fontFamily: "monospace", fontWeight: "600"
+                      fontSize: 15, fontFamily: "monospace", fontWeight: "700"
                     }}>
-                    Browse PDF file
+                    📄 Browse PDF file
                   </button>
-                  <div style={{ fontSize: 9, color: th.textFaint, marginTop: 4, textAlign: "center", lineHeight: 1.6 }}>
-                    Claude will read the PDF and automatically generate<br />the SCP flow diagram with all nodes and connections
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                    <div style={{ height: 1, width: 60, background: th.borderCol }} />
+                    <span style={{ fontSize: 9, color: th.textFaint }}>or drag nodes from palette</span>
+                    <div style={{ height: 1, width: 60, background: th.borderCol }} />
+                  </div>
+                  <div style={{ fontSize: 9, color: th.textFaint, textAlign: "center", lineHeight: 1.7 }}>
+                    Claude reads your PDF and builds the complete<br />SCP flow with nodes, edges and parameters
                   </div>
                 </>
               )}
             </div>
           )}
+          <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
           {connecting && (
             <div style={{
               position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
               background: "rgba(59,130,246,0.18)", border: "1px solid rgba(59,130,246,0.5)",
-              borderRadius: 6, padding: "5px 14px", fontSize: 10, color: "#60a5fa", fontFamily: "monospace", pointerEvents: "none"
+              borderRadius: 6, padding: "5px 14px", fontSize: 12, color: "#60a5fa", fontFamily: "monospace", pointerEvents: "none"
             }}>
               {connFrom ? `"${connFrom.label}" → click target` : "Click source node first"}
             </div>
@@ -1212,7 +1282,7 @@ function FlowBuilderTab({ th }) {
           {!liveSel ? (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, color: th.textH3, padding: 20, textAlign: "center" }}>
               <div style={{ fontSize: 22, opacity: 0.2 }}>🖱</div>
-              <div style={{ fontSize: 10, lineHeight: 1.6 }}>Click a node to edit its parameters</div>
+              <div style={{ fontSize: 12, lineHeight: 1.6 }}>Click a node to edit its parameters</div>
               <div style={{ fontSize: 9, color: th.textFaint, lineHeight: 1.6, marginTop: 4 }}>Use Connect Nodes to wire edges</div>
             </div>
           ) : (
@@ -1221,18 +1291,18 @@ function FlowBuilderTab({ th }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                   <div style={{ width: 9, height: 9, borderRadius: 2, background: COLS[liveSel.type] || "#888" }} />
                   <span style={{ fontSize: 11, fontWeight: "700", color: COLS[liveSel.type] || "#888", fontFamily: "monospace" }}>{liveSel.type}</span>
-                  <span style={{ fontSize: 8, color: th.textFaint, fontFamily: "monospace", marginLeft: "auto" }}>#{liveSel.id}</span>
+                  <span style={{ fontSize: 11, color: th.textFaint, fontFamily: "monospace", marginLeft: "auto" }}>#{liveSel.id}</span>
                 </div>
-                <div style={{ fontSize: 8, color: th.textH3, fontFamily: "monospace", marginBottom: 3 }}>Label</div>
+                <div style={{ fontSize: 11, color: th.textH3, fontFamily: "monospace", marginBottom: 3 }}>Label</div>
                 <input value={liveSel.label || ""} onChange={e => updateLabel(liveSel.id, e.target.value)}
-                  style={{ width: "100%", padding: "5px 7px", borderRadius: 5, border: `1px solid ${th.borderCol}`, background: th.rowHdr, color: th.textH1, fontSize: 10, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }} />
+                  style={{ width: "100%", padding: "5px 7px", borderRadius: 5, border: `1px solid ${th.borderCol}`, background: th.rowHdr, color: th.textH1, fontSize: 12, fontFamily: "monospace", outline: "none", boxSizing: "border-box" }} />
               </div>
               {(SCHEMA[liveSel.type] || []).length > 0 && (
                 <div style={{ padding: "10px 12px", borderBottom: `1px solid ${th.borderCol}`, display: "flex", flexDirection: "column", gap: 7 }}>
-                  <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace" }}>Parameters</div>
+                  <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace" }}>Parameters</div>
                   {(SCHEMA[liveSel.type] || []).map(f => (
                     <div key={f.k} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div style={{ fontSize: 8, color: th.textH3, fontFamily: "monospace" }}>{f.l}</div>
+                      <div style={{ fontSize: 11, color: th.textH3, fontFamily: "monospace" }}>{f.l}</div>
                       {f.o ? (
                         <select value={liveSel.params?.[f.k] || ""} onChange={e => updateParam(liveSel.id, f.k, e.target.value)}
                           style={{ padding: "4px 7px", borderRadius: 4, border: `1px solid ${th.borderCol}`, background: th.rowHdr, color: th.textH1, fontSize: 9, fontFamily: "monospace", outline: "none", cursor: "pointer" }}>
@@ -1252,11 +1322,11 @@ function FlowBuilderTab({ th }) {
                 if (!outs.length && !ins.length) return null;
                 return (
                   <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-                    <div style={{ fontSize: 8, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace", marginBottom: 2 }}>Connections</div>
+                    <div style={{ fontSize: 11, color: th.textH3, letterSpacing: 2, textTransform: "uppercase", fontFamily: "monospace", marginBottom: 2 }}>Connections</div>
                     {outs.map(e => {
                       const tn = nodes.find(x => x.id === e.target); const ec = ECOLS[e.type] || "#888"; return (
                         <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 7px", borderRadius: 4, background: th.rowHdr, borderLeft: `2px solid ${ec}` }}>
-                          <div style={{ flex: 1, fontSize: 8, color: ec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {e.label || "auto"} · {tn?.label || "?"}</div>
+                          <div style={{ flex: 1, fontSize: 11, color: ec, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>→ {e.label || "auto"} · {tn?.label || "?"}</div>
                           <span style={{ fontSize: 7, color: ec + "88", fontFamily: "monospace" }}>{e.type}</span>
                         </div>
                       );
@@ -1264,7 +1334,7 @@ function FlowBuilderTab({ th }) {
                     {ins.map(e => {
                       const sn = nodes.find(x => x.id === e.source); const ec = ECOLS[e.type] || "#888"; return (
                         <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 7px", borderRadius: 4, background: th.rowHdr, borderLeft: `2px solid ${ec}66` }}>
-                          <div style={{ flex: 1, fontSize: 8, color: ec + "bb", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>← {e.label || "auto"} · {sn?.label || "?"}</div>
+                          <div style={{ flex: 1, fontSize: 11, color: ec + "bb", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>← {e.label || "auto"} · {sn?.label || "?"}</div>
                           <span style={{ fontSize: 7, color: ec + "55", fontFamily: "monospace" }}>{e.type}</span>
                         </div>
                       );
@@ -1274,7 +1344,7 @@ function FlowBuilderTab({ th }) {
               })()}
               <div style={{ padding: "10px 12px", marginTop: "auto", borderTop: `1px solid ${th.borderCol}` }}>
                 <button onClick={() => deleteNode(liveSel.id)}
-                  style={{ width: "100%", padding: "6px", borderRadius: 5, border: "1px solid rgba(248,113,113,0.35)", background: "rgba(248,113,113,0.08)", color: "#f87171", cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}>
+                  style={{ width: "100%", padding: "6px", borderRadius: 5, border: "1px solid rgba(248,113,113,0.35)", background: "rgba(248,113,113,0.08)", color: "#f87171", cursor: "pointer", fontSize: 12, fontFamily: "monospace" }}>
                   Delete node
                 </button>
               </div>
@@ -1287,7 +1357,7 @@ function FlowBuilderTab({ th }) {
       {edgeDlg && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
           <div style={{ background: th.panelBg, border: `1px solid ${th.borderCol}`, borderRadius: 10, padding: "20px 24px", width: 300, display: "flex", flexDirection: "column", gap: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
-            <div style={{ fontSize: 12, fontWeight: "700", color: th.textH1 }}>Add Edge</div>
+            <div style={{ fontSize: 15, fontWeight: "700", color: th.textH1 }}>Add Edge</div>
             <div>
               <div style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace", marginBottom: 4 }}>
                 {nodes.find(n => n.id === edgeDlg.src)?.label} → {nodes.find(n => n.id === edgeDlg.tgt)?.label}
@@ -1305,7 +1375,7 @@ function FlowBuilderTab({ th }) {
                 {["DTMF", "DB", "Normal"].map(t => (
                   <button key={t} onClick={() => setEdgeTyp(t)}
                     style={{
-                      flex: 1, padding: "7px 0", borderRadius: 5, cursor: "pointer", fontFamily: "monospace", fontSize: 10, fontWeight: edgeTyp === t ? "700" : "400",
+                      flex: 1, padding: "7px 0", borderRadius: 5, cursor: "pointer", fontFamily: "monospace", fontSize: 12, fontWeight: edgeTyp === t ? "700" : "400",
                       border: `1px solid ${edgeTyp === t ? ECOLS[t] : th.borderCol}`,
                       background: edgeTyp === t ? ECOLS[t] + "22" : "transparent",
                       color: edgeTyp === t ? ECOLS[t] : th.textH3
@@ -1317,11 +1387,11 @@ function FlowBuilderTab({ th }) {
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button onClick={() => setEdgeDlg(null)}
-                style={{ flex: 1, padding: "8px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}>
+                style={{ flex: 1, padding: "8px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontSize: 12, fontFamily: "monospace" }}>
                 Cancel
               </button>
               <button onClick={addEdgeConfirm}
-                style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", color: "#fff", cursor: "pointer", fontSize: 10, fontFamily: "monospace", fontWeight: "700" }}>
+                style={{ flex: 1, padding: "8px", borderRadius: 6, border: "none", background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", color: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "monospace", fontWeight: "700" }}>
                 Add Edge
               </button>
             </div>
@@ -1337,6 +1407,401 @@ function FlowBuilderTab({ th }) {
 function dlSVG(el, name) { const s = new XMLSerializer().serializeToString(el); const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([s], { type: "image/svg+xml" })); a.download = name; a.click(); }
 function dlPNG(el, name, w, h) { const s = new XMLSerializer().serializeToString(el); const c = document.createElement("canvas"); c.width = w * 2; c.height = h * 2; const img = new Image(); img.onload = () => { c.getContext("2d").drawImage(img, 0, 0, w * 2, h * 2); const a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = name; a.click(); }; img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(s))); }
 
+// ─── DB API helper ────────────────────────────────────────────────────────────
+  const API = (typeof window !== "undefined" && window.SCP_API_URL) || (typeof window !== "undefined" && window.location.hostname === "localhost" ? "http://localhost:8000" : API_BASE);
+async function dbSave(payload) { try { const r = await fetch(`${API}/api/flows`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return await r.json(); } catch (e) { return { ok: false, error: e.message }; } }
+async function dbSaveExplanation(uuid, sections) { try { const r = await fetch(`${API}/api/flows/${uuid}/explanation`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sections }) }); return await r.json(); } catch (e) { return { ok: false, error: e.message }; } }
+async function dbList() { try { const r = await fetch(`${API}/api/flows`); return await r.json(); } catch (e) { return { ok: false, flows: [] }; } }
+async function dbGet(uuid) { try { const r = await fetch(`${API}/api/flows/${uuid}`); return await r.json(); } catch (e) { return { ok: false, error: e.message }; } }
+async function dbDelete(uuid) { try { const r = await fetch(`${API}/api/flows/${uuid}`, { method: "DELETE" }); return await r.json(); } catch (e) { return { ok: false, error: e.message }; } }
+
+// ─── Flow Explain Tab ─────────────────────────────────────────────────────────
+function FlowExplainTab({ graph, displayNodes, edges, fname, flowUuid, originalXmlProp, th }) {
+  const [status, setStatus] = useState("idle"); // idle|loading|done|error
+  const [sections, setSections] = useState([]);      // [{title, body}]
+  const [errMsg, setErrMsg] = useState("");
+  const [xmlInput, setXmlInput] = useState("");
+  const [originalXml, setOriginalXml] = useState(originalXmlProp || "");
+  const [dragging, setDragging] = useState(false);
+  const [localUuid, setLocalUuid] = useState(null);   // uuid when XML uploaded in this tab
+  const [dbSaveMsg, setDbSaveMsg] = useState(null);   // "saved"|"error"
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (originalXmlProp) setOriginalXml(originalXmlProp);
+  }, [originalXmlProp]);
+
+  // Build a compact text summary of the parsed graph for the prompt
+  function buildFlowSummary(nodes, edgeList) {
+    const lines = [];
+    lines.push(`Flow: ${fname || "Unknown"}`);
+    lines.push(`Total nodes: ${nodes.length}, Total edges: ${edgeList.length}`);
+    lines.push("");
+    lines.push("NODES:");
+    nodes.forEach(n => {
+      const params = Object.entries(n.params || {})
+        .filter(([, v]) => v && v !== "null" && v !== "0" && v !== "false")
+        .map(([k, v]) => `${k}=${v}`).join(", ");
+      lines.push(`  [${n.type}] ${n.label}${params ? ` (${params})` : ""}  id:${n.id}`);
+    });
+    lines.push("");
+    lines.push("CONNECTIONS:");
+    edgeList.forEach(e => {
+      const sn = nodes.find(n => n.id === e.source), tn = nodes.find(n => n.id === e.target);
+      if (sn && tn) lines.push(`  ${sn.label} --[${e.etype}${e.label ? ": " + e.label : ""}]--> ${tn.label}`);
+    });
+    return lines.join("\n");
+  }
+
+  async function generateExplanation(nodes, edgeList, filename) {
+    setStatus("loading"); setErrMsg(""); setSections([]);
+    const summary = buildFlowSummary(nodes, edgeList);
+    const SYSTEM = `You are a telecom IVR flow analyst. Given a technical BnG SCP IVR flow structure, explain it clearly in plain English for a non-technical business stakeholder.
+
+Structure your response as clearly labelled sections. Use this exact format for each section — a line starting with ### followed by the title, then the content:
+
+### Overview
+[2-3 sentences describing what this IVR service does, who it serves, and what the caller experience is]
+
+### Call Entry & Language
+[How the call starts, what short code, what language options are offered]
+
+### User Journey — New User
+[Step by step what a new/unsubscribed caller experiences. Use numbered steps. Be specific about key presses, prompts played, subscription attempts]
+
+### User Journey — Active User
+[Step by step what an active/subscribed caller experiences]
+
+### User Journey — Grace/Low Balance User
+[What happens to users with insufficient balance]
+
+### Subscription & Billing
+[How subscription works, what URLs are called, what happens on success/failure]
+
+### Audio Prompts
+[List the key prompt files played and what each one says/does]
+
+### B-Party Flow
+[If there is a B-party/recipient flow, explain it. If not, write "No B-party flow detected."]
+
+### Technical Summary
+[Brief: node count by type, edge types used, any notable technical patterns]
+
+Write in plain English. Use bullet points and numbered lists. Avoid technical jargon. Make it useful for a product manager reading a business requirements document.`;
+
+    try {
+      let resp;
+      if (originalXml) {
+        // Use the specialized XML-to-English generator
+        resp = await fetch(`${API}/generate-flow-explanation`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ xml_content: originalXml })
+        });
+      } else {
+        // Fallback to text-based summary explanation
+        resp = await fetch(`${API}/explain-flow`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system: SYSTEM,
+            message: `Here is the IVR flow structure from "${filename}":\n\n${summary}\n\nPlease explain this IVR flow in plain English as described.`
+          })
+        });
+      }
+      if (!resp.ok) { const t = await resp.text(); throw new Error(`API ${resp.status}: ${t.slice(0, 200)}`); }
+      const data = await resp.json();
+      const raw = data.explanation || "";
+      if (!raw) throw new Error("Empty response from API");
+
+      // Parse sections by ### heading
+      const parts = raw.split(/^###\s+/m).filter(Boolean);
+      const parsed = parts.map(p => {
+        const nl = p.indexOf("\n");
+        return { title: p.slice(0, nl).trim(), body: p.slice(nl + 1).trim() };
+      });
+      setSections(parsed.length ? parsed : [{ title: "Explanation", body: raw }]);
+      setStatus("done");
+      // Save to DB if we have a flow uuid
+      const targetUuid = flowUuid || localUuid;
+      if (targetUuid && parsed.length) {
+        dbSaveExplanation(targetUuid, parsed.map((s, i) => ({ title: s.title, body: s.body, order: i })));
+      }
+    } catch (e) {
+      setErrMsg(e.message || "Failed to generate explanation");
+      setStatus("error");
+    }
+  }
+
+  // Parse an XML file dropped/uploaded directly in this tab
+  function handleXmlFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const xmlText = e.target.result;
+        setOriginalXml(xmlText);
+        const parsed = parseXML(xmlText);
+        if (!parsed.nodes.length) throw new Error("No nodes found in XML");
+        const dn = parsed.nodes.map(n => ({ ...n, x: n.lx, y: n.ly }));
+        // Save to DB first, then generate explanation
+        const startNode = parsed.nodes.find(n => n.type === "Start");
+        const payload = {
+          flowName: startNode?.params?.service || startNode?.label || file.name.replace(/\.[^.]+$/, ""),
+          serviceName: startNode?.params?.service || null,
+          shortCode: startNode?.params?.shortcode || null,
+          callType: startNode?.params?.calltype || "IVR",
+          defaultLang: startNode?.params?.defaultlang || "_E",
+          source: "xml_upload",
+          filename: file.name,
+          xmlContent: xmlText,
+          nodes: dn,
+          edges: parsed.edges,
+        };
+        dbSave(payload).then(res => {
+          if (res.ok) { setLocalUuid(res.uuid); setDbSaveMsg("saved"); }
+          else setDbSaveMsg("error");
+        });
+        generateExplanation(dn, parsed.edges, file.name);
+      } catch (err) {
+        setErrMsg(err.message);
+        setStatus("error");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault(); setDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleXmlFile(file);
+  }
+
+  function downloadMD() {
+    const md = sections.map(s => `## ${s.title}\n\n${s.body}`).join("\n\n---\n\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = (fname || "flow").replace(/\.[^.]+$/, "") + "_explanation.md";
+    a.click();
+  }
+
+  const btnBase = { fontSize: 12, padding: "5px 13px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontFamily: "monospace" };
+
+  // Colour map for section titles
+  const SECTION_COLORS = {
+    "Overview": "#60a5fa", "Call Entry": "#34d399", "User Journey — New": "#fbbf24",
+    "User Journey — Active": "#4ade80", "User Journey — Grace": "#fb923c",
+    "Subscription": "#c084fc", "Audio Prompts": "#2dd4bf",
+    "B-Party": "#f87171", "Technical": "#8aafd4"
+  };
+  function sectionColor(title) {
+    for (const [k, v] of Object.entries(SECTION_COLORS)) if (title.includes(k)) return v;
+    return "#8aafd4";
+  }
+
+  // Format body text — bold **…**, bullet lists, numbered lists
+  function renderBody(body) {
+    return body.split("\n").map((line, i) => {
+      const trimmed = line.trim();
+      if (!trimmed) return <div key={i} style={{ height: 8 }} />;
+      // Bullet
+      const isBullet = /^[-•*]\s/.test(trimmed);
+      // Numbered
+      const isNum = /^\d+\.\s/.test(trimmed);
+      const text = trimmed.replace(/^[-•*\d.]\s*/, "");
+      // Bold inline **...**
+      const parts = text.split(/\*\*(.+?)\*\*/g);
+      const rendered = parts.map((p, j) => j % 2 === 1 ? <strong key={j} style={{ color: th.textH1, fontWeight: "700" }}>{p}</strong> : p);
+      return (
+        <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "flex-start" }}>
+          {(isBullet || isNum) && <span style={{ color: th.textH3, flexShrink: 0, fontFamily: "monospace", fontSize: 12, marginTop: 2 }}>{isNum ? trimmed.match(/^\d+/)[0] + "." : "•"}</span>}
+          <span style={{ fontSize: 11, color: th.textH2, lineHeight: 1.7 }}>{rendered}</span>
+        </div>
+      );
+    });
+  }
+
+  const hasGraph = displayNodes && displayNodes.length > 0;
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: th.appBg }}>
+
+      {/* Toolbar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: `1px solid ${th.borderCol}`, background: th.headerBg, flexShrink: 0, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: "700", color: th.textH1 }}>📖 Flow Explanation</span>
+        <div style={{ width: 1, height: 16, background: th.borderCol }} />
+        {hasGraph && (
+          <button onClick={() => generateExplanation(displayNodes, edges, fname || "flow.xml")}
+            disabled={status === "loading"}
+            style={{
+              ...btnBase, border: `1px solid ${status === "loading" ? "#3b82f6" : th.borderCol}`,
+              color: status === "loading" ? "#60a5fa" : th.textH2, fontWeight: "600"
+            }}>
+            {status === "loading" ? "⚙ Generating…" : "⚙ Explain Current Flow"}
+          </button>
+        )}
+        <button onClick={() => fileRef.current?.click()} style={btnBase}>
+          📂 Upload XML File
+        </button>
+        <input ref={fileRef} type="file" accept=".xml,.txt" style={{ display: "none" }}
+          onChange={e => e.target.files[0] && handleXmlFile(e.target.files[0])} />
+        {status === "done" && <button onClick={downloadMD} style={btnBase}>⬇ Download .md</button>}
+        {status === "error" && <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace" }}>{errMsg.slice(0, 80)}</span>}
+        {dbSaveMsg && (
+          <span style={{
+            fontSize: 9, padding: "3px 9px", borderRadius: 4, fontFamily: "monospace",
+            background: dbSaveMsg === "saved" ? "rgba(52,211,153,0.12)" : "rgba(248,113,113,0.12)",
+            border: `1px solid ${dbSaveMsg === "saved" ? "rgba(52,211,153,0.3)" : "rgba(248,113,113,0.3)"}`,
+            color: dbSaveMsg === "saved" ? "#34d399" : "#f87171"
+          }}>
+            {dbSaveMsg === "saved" ? "✓ Saved to DB" : "✗ DB Error"}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: 9, color: th.textFaint, fontFamily: "monospace" }}>
+          {fname && `📄 ${fname}`}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 0 }}>
+
+        {/* Idle / empty state */}
+        {status === "idle" && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div
+              onDragOver={e => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
+                padding: 40, borderRadius: 14, border: `2px dashed ${dragging ? "#3b82f6" : th.borderCol}`,
+                background: dragging ? "rgba(59,130,246,0.05)" : "transparent",
+                transition: "all .2s", maxWidth: 480, textAlign: "center"
+              }}>
+              <div style={{ fontSize: 40, opacity: 0.2 }}>📖</div>
+              <div style={{ fontSize: 13, fontWeight: "700", color: th.textH2 }}>
+                {dragging ? "Drop XML to explain" : "Explain any SCP flow in plain English"}
+              </div>
+              <div style={{ fontSize: 12, color: th.textH3, lineHeight: 1.7 }}>
+                Upload an XML flow file or use a flow already loaded in the Flow Diagram tab.<br />
+                Claude will generate a full plain-English walkthrough of every user journey,<br />
+                subscription logic, prompts and technical structure.
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                <button onClick={() => fileRef.current?.click()}
+                  style={{
+                    padding: "8px 20px", borderRadius: 7, border: "1px solid rgba(59,130,246,0.4)",
+                    background: "rgba(59,130,246,0.1)", color: "#60a5fa", cursor: "pointer",
+                    fontSize: 11, fontFamily: "monospace", fontWeight: "600"
+                  }}>
+                  📂 Upload XML
+                </button>
+                {hasGraph && (
+                  <button onClick={() => generateExplanation(displayNodes, edges, fname || "flow.xml")}
+                    style={{
+                      padding: "8px 20px", borderRadius: 7, border: "1px solid rgba(52,211,153,0.4)",
+                      background: "rgba(52,211,153,0.1)", color: "#34d399", cursor: "pointer",
+                      fontSize: 11, fontFamily: "monospace", fontWeight: "600"
+                    }}>
+                    ⚙ Explain Current Flow
+                  </button>
+                )}
+              </div>
+              {!hasGraph && (
+                <div style={{ fontSize: 9, color: th.textFaint, marginTop: 4 }}>
+                  Tip: Upload a flow in the Flow Diagram tab first to use "Explain Current Flow"
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Loading */}
+        {status === "loading" && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 14, color: th.textH3 }}>
+            <div style={{ fontSize: 32, opacity: 0.4 }}>📖</div>
+            <div style={{ fontSize: 15, color: th.textH2, fontWeight: "600" }}>Analysing IVR flow…</div>
+            <div style={{ fontSize: 9, color: th.textFaint }}>Claude is reading every node and connection</div>
+          </div>
+        )}
+
+        {/* Error */}
+        {status === "error" && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 28, opacity: 0.4 }}>⚠</div>
+            <div style={{ fontSize: 15, color: "#f87171", fontWeight: "600" }}>Explanation failed</div>
+            <div style={{
+              fontSize: 9, color: "#f87171aa", fontFamily: "monospace", maxWidth: 440, textAlign: "center",
+              padding: "10px 14px", borderRadius: 7, background: "rgba(248,113,113,0.08)",
+              border: "1px solid rgba(248,113,113,0.25)", wordBreak: "break-word", lineHeight: 1.7
+            }}>
+              {errMsg}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => fileRef.current?.click()} style={{ padding: "6px 16px", borderRadius: 6, border: `1px solid ${th.borderCol}`, background: "transparent", color: th.textH3, cursor: "pointer", fontSize: 12, fontFamily: "monospace" }}>Upload Different File</button>
+              {hasGraph && <button onClick={() => generateExplanation(displayNodes, edges, fname || "flow.xml")} style={{ padding: "6px 16px", borderRadius: 6, border: "1px solid rgba(59,130,246,0.4)", background: "rgba(59,130,246,0.1)", color: "#60a5fa", cursor: "pointer", fontSize: 12, fontFamily: "monospace" }}>Retry Current Flow</button>}
+            </div>
+          </div>
+        )}
+
+        {/* Results */}
+        {status === "done" && sections.length > 0 && (
+          <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 0 }}>
+
+            {/* Section nav pills */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>
+              {sections.map((s, i) => (
+                <a key={i} href={`#section-${i}`}
+                  style={{
+                    fontSize: 9, padding: "3px 10px", borderRadius: 20,
+                    border: `1px solid ${sectionColor(s.title)}44`,
+                    background: sectionColor(s.title) + "15",
+                    color: sectionColor(s.title), fontFamily: "monospace",
+                    textDecoration: "none", cursor: "pointer"
+                  }}>
+                  {s.title}
+                </a>
+              ))}
+            </div>
+
+            {/* Section cards */}
+            {sections.map((s, i) => {
+              const col = sectionColor(s.title);
+              return (
+                <div key={i} id={`section-${i}`}
+                  style={{
+                    marginBottom: 16, borderRadius: 10, overflow: "hidden",
+                    border: `1px solid ${th.borderCol}`, background: th.panelBg
+                  }}>
+                  {/* Section header */}
+                  <div style={{
+                    padding: "10px 16px", borderBottom: `1px solid ${th.borderCol}`,
+                    background: `linear-gradient(90deg,${col}18,transparent)`,
+                    display: "flex", alignItems: "center", gap: 10
+                  }}>
+                    <div style={{ width: 3, height: 18, borderRadius: 2, background: col, flexShrink: 0 }} />
+                    <span style={{ fontSize: 15, fontWeight: "700", color: col, fontFamily: "monospace", letterSpacing: 0.3 }}>
+                      {s.title}
+                    </span>
+                  </div>
+                  {/* Section body */}
+                  <div style={{ padding: "14px 16px 16px" }}>
+                    {renderBody(s.body)}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{ textAlign: "center", padding: "8px 0 4px", fontSize: 9, color: th.textFaint, fontFamily: "monospace" }}>
+              Generated from {fname || "flow"} · {displayNodes?.length || 0} nodes · {edges?.length || 0} edges
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [graph, setGraph] = useState(null);
@@ -1348,10 +1813,44 @@ export default function App() {
   const [showLeg, setLeg] = useState(true);
   const [zoom, setZoom] = useState(0.7);
   const [pan, setPan] = useState({ x: 30, y: 20 });
-  const [themeKey, setThemeKey] = useState("dark");
+  const [themeKey, setThemeKey] = useState("light");
   const [showDlMenu, setDlMenu] = useState(false);
+  const [flowUuid, setFlowUuid] = useState(null);   // DB uuid for current flow
+  const [dbStatus, setDbStatus] = useState(null);   // null|"saving"|"saved"|"error"
+  const [originalXml, setOriginalXml] = useState("");
   const panRef = useRef(null), fileRef = useRef(), svgRef = useRef();
   const th = THEMES[themeKey];
+
+  // ── Save current flow to DB ───────────────────────────────────────────────
+  async function saveFlowToDB(g, filename, xmlText, existingUuid) {
+    if (!g || !g.nodes.length) return null;
+    setDbStatus("saving");
+    const startNode = g.nodes.find(n => n.type === "Start");
+    const payload = {
+      uuid: existingUuid || null,
+      flowName: startNode?.params?.service || startNode?.label || filename?.replace(/\.[^.]+$/, "") || "Unnamed",
+      serviceName: startNode?.params?.service || null,
+      shortCode: startNode?.params?.shortcode || null,
+      callType: startNode?.params?.calltype || "IVR",
+      defaultLang: startNode?.params?.defaultlang || "_E",
+      source: "xml_upload",
+      filename: filename || null,
+      xmlContent: xmlText || null,
+      nodes: g.nodes.map(n => ({ ...n, x: n.lx || n.x || 0, y: n.ly || n.y || 0 })),
+      edges: g.edges,
+    };
+    const res = await dbSave(payload);
+    if (res.ok) {
+      setFlowUuid(res.uuid);
+      setDbStatus("saved");
+      setTimeout(() => setDbStatus(null), 3000);
+      return res.uuid;
+    } else {
+      setDbStatus("error");
+      setTimeout(() => setDbStatus(null), 5000);
+      return null;
+    }
+  }
 
   async function handleFile(file) {
     setErr(null); setSel(null);
@@ -1364,9 +1863,12 @@ export default function App() {
         for (const f of xf) { const t = await zip.files[f].async("string"); if (t.includes("mxGraphModel")) { txt = t; break; } }
         if (!txt) throw new Error("No SCP XML found in JAR");
       } else txt = await file.text();
+      setOriginalXml(txt);
       const g = parseXML(txt);
       if (!g.nodes.length) throw new Error("No nodes found — check this is a BnG SCP flow file");
       setGraph(g); setFname(file.name); setTab("diagram"); setZoom(0.7); setPan({ x: 30, y: 20 });
+      // Auto-save to MySQL
+      saveFlowToDB(g, file.name, txt, null);
     } catch (e) { setErr(e.message); }
   }
 
@@ -1377,13 +1879,13 @@ export default function App() {
   const svgH = displayNodes.length ? Math.max(700, ...displayNodes.map(n => n.y + n.h + 100)) : 700;
   const baseName = (fname || "flow").replace(/\.[^.]+$/, "");
 
-  const TABS = [{ id: "upload", label: "↑ Upload" }, { id: "diagram", label: "⬡ Flow Diagram" }, { id: "prompts", label: "🎵 Prompt Details" }, { id: "builder", label: "⚒ Flow Builder" }];
+  const TABS = [{ id: "upload", label: "↑ Upload" }, { id: "diagram", label: "⬡ Flow Diagram" }, { id: "prompts", label: "🎵 Prompt Details" }, { id: "builder", label: "⚒ Flow Builder" }, { id: "explain", label: "📖 Flow Explanation" }];
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: th.appBg, color: th.textH1, fontFamily: "'JetBrains Mono','Fira Code',monospace" }} onClick={() => setDlMenu(false)}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 20px", borderBottom: `1px solid ${th.borderCol}`, background: th.headerBg, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: 12, color: "#fff" }}>SCP</div>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: 15, color: "#fff" }}>SCP</div>
           <div>
             <div style={{ fontSize: 13, fontWeight: "700", color: th.textH1, letterSpacing: 1 }}>IVR FLOW TOOL</div>
             <div style={{ fontSize: 7, color: th.textFaint, letterSpacing: 3, textTransform: "uppercase" }}>BnG CoreEngine 4 · Visualizer + Builder</div>
@@ -1392,19 +1894,30 @@ export default function App() {
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           {graph && [["Nodes", displayNodes.length], ["Edges", edges.length]].map(([k, v]) => (<div key={k} style={{ textAlign: "center" }}><div style={{ fontSize: 18, fontWeight: "700", color: "#3b82f6", lineHeight: 1 }}>{v}</div><div style={{ fontSize: 7, color: th.textFaint, textTransform: "uppercase", letterSpacing: 2 }}>{k}</div></div>))}
           {fname && <span style={{ fontSize: 9, color: th.textH3 }}>📄 {fname}</span>}
-          <div style={{ display: "flex", gap: 3 }}>{Object.entries(THEMES).map(([key, t]) => (<button key={key} title={t.name} onClick={() => setThemeKey(key)} style={{ width: 28, height: 28, borderRadius: 6, cursor: "pointer", fontSize: 14, background: themeKey === key ? "rgba(59,130,246,0.15)" : "transparent", border: `1.5px solid ${themeKey === key ? "#3b82f6" : th.borderCol}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{t.icon}</button>))}</div>
+          {/* DB status indicator */}
+          {dbStatus && (
+            <span style={{
+              fontSize: 9, padding: "3px 9px", borderRadius: 4, fontFamily: "monospace",
+              background: dbStatus === "saved" ? "rgba(52,211,153,0.12)" : dbStatus === "saving" ? "rgba(59,130,246,0.12)" : "rgba(248,113,113,0.12)",
+              border: `1px solid ${dbStatus === "saved" ? "rgba(52,211,153,0.3)" : dbStatus === "saving" ? "rgba(59,130,246,0.3)" : "rgba(248,113,113,0.3)"}`,
+              color: dbStatus === "saved" ? "#34d399" : dbStatus === "saving" ? "#60a5fa" : "#f87171"
+            }}>
+              {dbStatus === "saving" ? "⏳ Saving…" : dbStatus === "saved" ? "✓ Saved to DB" : "✗ DB Error"}
+            </span>
+          )}
+          {/* Theme switcher removed as requested for forced Light Mode */}
           {graph && (<div style={{ position: "relative" }} onClick={e => e.stopPropagation()}>
-            <button onClick={() => setDlMenu(v => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 6, background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontFamily: "monospace", fontWeight: "700" }}>⬇ Download</button>
+            <button onClick={() => setDlMenu(v => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 6, background: "linear-gradient(135deg,#1d4ed8,#0ea5e9)", border: "none", color: "#fff", cursor: "pointer", fontSize: 12, fontFamily: "monospace", fontWeight: "700" }}>⬇ Download</button>
             {showDlMenu && (<div style={{ position: "absolute", right: 0, top: 36, background: th.panelBg, border: `1px solid ${th.borderCol}`, borderRadius: 8, padding: 6, zIndex: 200, minWidth: 145, boxShadow: "0 8px 28px rgba(0,0,0,0.35)" }}>
-              <button onClick={() => { if (svgRef.current) dlSVG(svgRef.current, baseName + ".svg"); setDlMenu(false); }} style={{ display: "block", width: "100%", padding: "8px 12px", background: "none", border: "none", color: th.textH1, cursor: "pointer", fontSize: 10, fontFamily: "monospace", textAlign: "left", borderRadius: 4 }}>📐 SVG (vector)</button>
-              <button onClick={() => { if (svgRef.current) dlPNG(svgRef.current, baseName + ".png", svgW, svgH); setDlMenu(false); }} style={{ display: "block", width: "100%", padding: "8px 12px", background: "none", border: "none", color: th.textH1, cursor: "pointer", fontSize: 10, fontFamily: "monospace", textAlign: "left", borderRadius: 4 }}>🖼 PNG (2×)</button>
+              <button onClick={() => { if (svgRef.current) dlSVG(svgRef.current, baseName + ".svg"); setDlMenu(false); }} style={{ display: "block", width: "100%", padding: "8px 12px", background: "none", border: "none", color: th.textH1, cursor: "pointer", fontSize: 12, fontFamily: "monospace", textAlign: "left", borderRadius: 4 }}>📐 SVG (vector)</button>
+              <button onClick={() => { if (svgRef.current) dlPNG(svgRef.current, baseName + ".png", svgW, svgH); setDlMenu(false); }} style={{ display: "block", width: "100%", padding: "8px 12px", background: "none", border: "none", color: th.textH1, cursor: "pointer", fontSize: 12, fontFamily: "monospace", textAlign: "left", borderRadius: 4 }}>🖼 PNG (2×)</button>
             </div>)}
           </div>)}
         </div>
       </header>
 
       <div style={{ display: "flex", borderBottom: `1px solid ${th.borderCol}`, background: th.tabBg, flexShrink: 0 }}>
-        {TABS.map(({ id, label }) => (<button key={id} onClick={() => setTab(id)} style={{ padding: "9px 22px", background: "none", border: "none", cursor: "pointer", borderBottom: `2px solid ${tab === id ? "#3b82f6" : "transparent"}`, color: tab === id ? "#60a5fa" : th.textH3, fontSize: 10, fontFamily: "monospace", letterSpacing: 1, textTransform: "uppercase", fontWeight: tab === id ? "700" : "400" }}>{label}</button>))}
+        {TABS.map(({ id, label }) => (<button key={id} onClick={() => setTab(id)} style={{ padding: "9px 22px", background: "none", border: "none", cursor: "pointer", borderBottom: `2px solid ${tab === id ? "#3b82f6" : "transparent"}`, color: tab === id ? "#60a5fa" : th.textH3, fontSize: 12, fontFamily: "monospace", letterSpacing: 1, textTransform: "uppercase", fontWeight: tab === id ? "700" : "400" }}>{label}</button>))}
       </div>
 
       {/* Upload Tab */}
@@ -1416,15 +1929,15 @@ export default function App() {
             style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderRadius: 10, border: `2px dashed ${isDragging ? "#3b82f6" : th.borderCol}`, cursor: "pointer", background: isDragging ? "rgba(59,130,246,0.06)" : "transparent", flexShrink: 0 }}>
             <input ref={fileRef} type="file" accept=".xml,.txt,.jar,.zip" style={{ display: "none" }} onChange={e => e.target.files[0] && handleFile(e.target.files[0])} />
             <div style={{ fontSize: 22, opacity: 0.35 }}>☏</div>
-            <div><div style={{ fontSize: 11, color: th.textH2, fontWeight: "700", marginBottom: 2 }}>Drop SCP XML or JAR here</div><div style={{ fontSize: 8, color: th.textH3 }}>Accepts .xml · .txt · .jar · .zip</div></div>
+            <div><div style={{ fontSize: 11, color: th.textH2, fontWeight: "700", marginBottom: 2 }}>Drop SCP XML or JAR here</div><div style={{ fontSize: 11, color: th.textH3 }}>Accepts .xml · .txt · .jar · .zip</div></div>
             <div style={{ padding: "5px 14px", borderRadius: 6, background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.35)", fontSize: 9, color: "#60a5fa", fontWeight: "700", marginLeft: 6, whiteSpace: "nowrap" }}>Browse Files</div>
           </div>
-          {err ? <div style={{ padding: "9px 14px", borderRadius: 7, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 10, flex: 1 }}>⚠ {err}</div>
+          {err ? <div style={{ padding: "9px 14px", borderRadius: 7, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 12, flex: 1 }}>⚠ {err}</div>
             : <div style={{ fontSize: 9, color: th.textH3, lineHeight: 1.7 }}>Upload a BnG SCP flow file to visualize · Or use <strong style={{ color: "#60a5fa" }}>⚒ Flow Builder</strong> to create a new SCP XML from PDF or text.</div>}
         </div>
         <div style={{ padding: "20px 28px", flex: 1 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-            <div style={{ fontSize: 12, fontWeight: "700", color: th.textH1 }}>SCP Node Catalog</div>
+            <div style={{ fontSize: 15, fontWeight: "700", color: th.textH1 }}>SCP Node Catalog</div>
             <div style={{ fontSize: 9, color: th.textH3, fontFamily: "monospace" }}>{ALL_NODES.length} node types · CoreEngine_4.jar</div>
           </div>
           <div style={{ fontSize: 8.5, color: th.textH3, marginBottom: 20, lineHeight: 1.6 }}>All node types available in BnG CoreEngine 4 — extracted from the JAR. These are the exact types the Flow Builder uses when generating XML.</div>
@@ -1436,7 +1949,7 @@ export default function App() {
                 <div style={{ width: 3, height: 18, borderRadius: 2, background: cat.color, flexShrink: 0 }} />
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: cat.color + "18", border: `1px solid ${cat.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: cat.color, flexShrink: 0 }}>{cat.icon}</div>
                 <span style={{ fontSize: 11, fontWeight: "700", color: cat.color, fontFamily: "monospace" }}>{cat.label}</span>
-                <span style={{ fontSize: 8, color: th.textH3, fontFamily: "monospace" }}>({catNodes.length} nodes)</span>
+                <span style={{ fontSize: 11, color: th.textH3, fontFamily: "monospace" }}>({catNodes.length} nodes)</span>
                 <div style={{ flex: 1, height: 1, background: th.borderCol }} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(210px,1fr))", gap: 8 }}>
@@ -1444,8 +1957,8 @@ export default function App() {
                   onMouseEnter={e => { e.currentTarget.style.borderColor = cat.color + "66"; e.currentTarget.style.boxShadow = `0 0 0 1px ${cat.color}22`; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = th.borderCol; e.currentTarget.style.boxShadow = "none"; }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 6, background: cat.color + "18", border: `1px solid ${cat.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: cat.color, flexShrink: 0 }}>{cat.icon}</div>
-                    <span style={{ fontSize: 10, fontWeight: "700", color: th.textH1, fontFamily: "monospace", wordBreak: "break-word", lineHeight: 1.3 }}>{node.name}</span>
+                    <div style={{ width: 26, height: 26, borderRadius: 6, background: cat.color + "18", border: `1px solid ${cat.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, color: cat.color, flexShrink: 0 }}>{cat.icon}</div>
+                    <span style={{ fontSize: 12, fontWeight: "700", color: th.textH1, fontFamily: "monospace", wordBreak: "break-word", lineHeight: 1.3 }}>{node.name}</span>
                   </div>
                   <div style={{ fontSize: 8.5, color: th.textH3, lineHeight: 1.55, paddingLeft: 34 }}>{node.desc}</div>
                   {node.params?.length > 0 && (<div style={{ paddingLeft: 34, display: "flex", flexWrap: "wrap", gap: 3, marginTop: 2 }}>
@@ -1474,7 +1987,7 @@ export default function App() {
               onMouseUp={() => panRef.current = null} onMouseLeave={() => panRef.current = null}>
               <div style={{ position: "absolute", top: 12, right: 12, zIndex: 20, display: "flex", flexDirection: "column", gap: 3 }}>
                 {[["＋", () => setZoom(z => Math.min(3, z + 0.1))], ["－", () => setZoom(z => Math.max(0.1, z - 0.1))], ["⟳", () => { setZoom(0.7); setPan({ x: 30, y: 20 }); }]].map(([l, fn], i) => (<button key={i} onClick={fn} style={{ width: 27, height: 27, borderRadius: 5, background: th.headerBg, border: `1px solid ${th.borderCol}`, color: th.textH2, cursor: "pointer", fontSize: 13, fontFamily: "monospace", display: "flex", alignItems: "center", justifyContent: "center" }}>{l}</button>))}
-                <div style={{ fontSize: 8, color: th.textH3, textAlign: "center", fontFamily: "monospace", marginTop: 2 }}>{Math.round(zoom * 100)}%</div>
+                <div style={{ fontSize: 11, color: th.textH3, textAlign: "center", fontFamily: "monospace", marginTop: 2 }}>{Math.round(zoom * 100)}%</div>
               </div>
               <svg ref={svgRef} width={svgW} height={svgH} style={{ transform: `scale(${zoom}) translate(${pan.x / zoom}px,${pan.y / zoom}px)`, transformOrigin: "top left" }}>
                 <defs>
@@ -1487,7 +2000,7 @@ export default function App() {
               </svg>
             </div>
             <div style={{ borderTop: `1px solid ${th.borderCol}`, background: th.tabBg, flexShrink: 0 }}>
-              <button onClick={() => setLeg(v => !v)} style={{ background: "none", border: "none", color: th.textH3, cursor: "pointer", fontSize: 8, fontFamily: "monospace", letterSpacing: 2, textTransform: "uppercase", padding: "5px 14px", display: "block" }}>{showLeg ? "▼" : "►"} Legend</button>
+              <button onClick={() => setLeg(v => !v)} style={{ background: "none", border: "none", color: th.textH3, cursor: "pointer", fontSize: 11, fontFamily: "monospace", letterSpacing: 2, textTransform: "uppercase", padding: "5px 14px", display: "block" }}>{showLeg ? "▼" : "►"} Legend</button>
               {showLeg && (<div style={{ padding: "6px 14px 10px", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
                 {Object.entries(typeCounts).map(([type, count]) => { const tc = th.nodeTypes[type] || th.nodeTypes.Navigation; const meta = NODE_META[type] || NODE_META.Navigation; return (<div key={type} style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 8, height: 8, borderRadius: 2, background: tc.c }} /><span style={{ fontSize: 8.5, color: th.textH2, fontFamily: "monospace" }}>{meta.icon} {type} <span style={{ color: th.textH3 }}>×{count}</span></span></div>); })}
                 <div style={{ width: "100%", height: 1, background: th.borderCol }} />
@@ -1504,6 +2017,9 @@ export default function App() {
 
       {/* Builder Tab */}
       {tab === "builder" && <FlowBuilderTab th={th} />}
+
+      {/* Explain Tab */}
+      {tab === "explain" && <FlowExplainTab graph={graph} displayNodes={displayNodes} edges={edges} fname={fname} flowUuid={flowUuid} originalXmlProp={originalXml} th={th} />}
     </div>
   );
 }

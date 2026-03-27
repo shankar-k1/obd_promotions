@@ -1,76 +1,77 @@
 import os
+import json
+import uuid
+from datetime import datetime
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import bcrypt
-from psycopg2.extras import execute_values
 
 load_dotenv()
 
 class DatabaseModule:
     def __init__(self):
-        self.db_type = os.getenv("DB_TYPE", "postgresql") 
-        # Consolidate URL and Handle Fallbacks
-        self.url = os.getenv("DATABASE_URL")
-        self.init_error: str = "" # Initialize as string
-        self.last_error: str = "" # Initialize for tracking recent operations
-        if self.url:
-            if self.url.startswith("postgres://"):
-                self.url = self.url.replace("postgres://", "postgresql://", 1)
-            
-            # Robust fix: Strip unsupported 'prepare_threshold' if it exists in the env var
-            if "prepare_threshold" in self.url:
-                import re
-                self.url = re.sub(r'[&?]prepare_threshold=[^&]+', '', self.url)
-                # Cleanup if ? was the only thing left
-                if self.url.endswith('?'):
-                    self.url = self.url[:-1]
+        self.db_type = os.getenv("DB_TYPE", "mysql") 
+        self.init_error: str = ""
+        self.last_error: str = ""
         
-        if not self.url:
-            user = os.getenv("DB_USER", "postgres")
-            password = os.getenv("DB_PASS", "")
+        # Build URL from individual env vars if DATABASE_URL is missing
+        db_url = os.getenv("DATABASE_URL")
+        
+        if not db_url:
+            user = os.getenv("DB_USER", "root" if self.db_type == "mysql" else "postgres")
+            password = os.getenv("DB_PASS", "shan2001" if self.db_type == "mysql" else "")
             host = os.getenv("DB_HOST", "localhost")
-            port = os.getenv("DB_PORT", "5432")
-            dbname = os.getenv("DB_NAME", "postgres")
-            self.url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
-        
-        url = self.url
-        self.init_error = ""
+            port = os.getenv("DB_PORT", "3306" if self.db_type == "mysql" else "5432")
+            dbname = os.getenv("DB_NAME", "obd_promotions" if self.db_type == "mysql" else "postgres")
             
+            if self.db_type == "mysql":
+                db_url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{dbname}"
+            else:
+                db_url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
+        else:
+            # Clean up the provided URL
+            if db_url.startswith("postgres://"):
+                db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+            elif db_url.startswith("postgresql://"):
+                db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            elif db_url.startswith("mysql://"):
+                db_url = db_url.replace("mysql://", "mysql+pymysql://", 1)
+            
+            # Remove prepare_threshold for Postgres as it causes errors with SQLAlchemy
+            if "prepare_threshold" in db_url:
+                import re
+                db_url = re.sub(r'[&?]prepare_threshold=[^&]+', '', db_url)
+                if db_url.endswith('?'):
+                    db_url = db_url[:-1]
+
+        self.url = db_url
+        self.engine = None
+        
         try:
-            # Handle PostgreSQL Connectors (Supabase/Render/Postgres)
-            if url and ("postgresql" in url or "postgres" in url):
-                # Ensure SQLAlchemy uses the psycopg2 driver explicitly
-                if "://" in url and not url.startswith("postgresql+psycopg2"):
-                    url = url.replace("://", "+psycopg2://", 1)
-                
-                # Ensure sslmode=require for cloud services
-                if "supabase" in url or "render" in url:
-                    if "sslmode" not in url:
-                        if "?" not in url: url += "?sslmode=require"
-                        else: url += "&sslmode=require"
-                
-                connect_args = {"connect_timeout": 10}
-                if "sslmode=require" in url:
-                    connect_args["sslmode"] = "require"
-                    
+            if "mysql" in self.url:
                 self.engine = create_engine(
-                    url, 
+                    self.url, 
                     pool_pre_ping=True,
-                    pool_recycle=300, # Recycle connections every 5 mins
+                    pool_recycle=300,
+                    pool_timeout=30,
+                    pool_size=10,
+                    max_overflow=20,
+                    connect_args={"charset": "utf8mb4"}
+                )
+            else:
+                self.engine = create_engine(
+                    self.url, 
+                    pool_pre_ping=True,
+                    pool_recycle=300,
                     pool_timeout=30,
                     pool_size=5,
                     max_overflow=10,
-                    connect_args=connect_args
+                    connect_args={"connect_timeout": 10}
                 )
-            elif url:
-                self.engine = create_engine(url)
-            else:
-                self.engine = None
         except Exception as e:
             self.init_error = str(e)
             print(f"❌ DATABASE INITIALIZATION ERROR: {e}")
-            self.engine = None
             
         if self.engine:
             try:
@@ -79,6 +80,7 @@ class DatabaseModule:
                 with self.engine.connect() as conn:
                     conn.execute(text("SELECT 1"))
                 print("DEBUG: DB Connection Successful.")
+                self.db_name = self.engine.url.database
                 self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
                 self._initialize_tables()
             except Exception as e:
@@ -87,29 +89,44 @@ class DatabaseModule:
                 # We don't set engine to None here, we might want to retry later or show error in UI
 
     def _initialize_tables(self):
-        """Creates the necessary tables if they don't exist (PostgreSQL syntax)."""
-        # PostgreSQL uses SERIAL for auto-increment and different table creation checks
+        """Creates the necessary tables if they don't exist (MySQL syntax)."""
         queries = [
             """
             CREATE TABLE IF NOT EXISTS obdscheduling_details (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 obd_name VARCHAR(255) NOT NULL,
                 flow_name VARCHAR(255) NOT NULL,
                 msc_ip VARCHAR(50) NOT NULL,
                 cli VARCHAR(50) NOT NULL,
+                service_id VARCHAR(255),
+                jobname VARCHAR(255),
+                start_date VARCHAR(50),
+                end_date VARCHAR(50),
+                start_time VARCHAR(50),
+                end_time VARCHAR(50),
+                priority VARCHAR(20) DEFAULT '1',
+                status VARCHAR(50) DEFAULT 'Active',
+                blackout_hours VARCHAR(50) DEFAULT '0',
+                max_retry VARCHAR(20) DEFAULT '1',
+                remaining_retry VARCHAR(20) DEFAULT '1',
+                starcopy VARCHAR(20) DEFAULT '0',
+                recorddedication VARCHAR(20) DEFAULT '1',
+                server_ip VARCHAR(50),
+                max_obd_count VARCHAR(50),
+                daywise VARCHAR(50) DEFAULT '0',
                 scheduled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS dnd_list (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 msisdn VARCHAR(20) UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS subscriptions (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
                 service_id VARCHAR(50) NOT NULL,
                 status VARCHAR(20) DEFAULT 'ACTIVE',
@@ -118,14 +135,14 @@ class DatabaseModule:
             """,
             """
             CREATE TABLE IF NOT EXISTS unsubscriptions (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS campaign_targets (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
                 status VARCHAR(20) DEFAULT 'scheduled',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -133,19 +150,16 @@ class DatabaseModule:
             """,
             """
             CREATE TABLE IF NOT EXISTS user_details (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """,
-            "CREATE INDEX IF NOT EXISTS idx_dnd_msisdn ON dnd_list(msisdn);",
-            "CREATE INDEX IF NOT EXISTS idx_subs_msisdn ON subscriptions(msisdn);",
-            "CREATE INDEX IF NOT EXISTS idx_unsubs_msisdn ON unsubscriptions(msisdn);",
-            "CREATE INDEX IF NOT EXISTS idx_camp_msisdn ON campaign_targets(msisdn);",
+            "", # Handled by migration logic below
             """
             CREATE TABLE IF NOT EXISTS email_sync_log (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 email_uid VARCHAR(255) UNIQUE NOT NULL,
                 filename VARCHAR(255),
                 synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -153,7 +167,7 @@ class DatabaseModule:
             """,
             """
             CREATE TABLE IF NOT EXISTS email_sourced_targets (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 msisdn VARCHAR(20) NOT NULL,
                 email_uid VARCHAR(255) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -161,34 +175,205 @@ class DatabaseModule:
             """,
             """
             CREATE TABLE IF NOT EXISTS scrub_jobs (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 username VARCHAR(50) NOT NULL,
                 status VARCHAR(20) DEFAULT 'PENDING',
                 operator VARCHAR(50),
                 options_json TEXT,
                 total_input BIGINT DEFAULT 0,
                 final_count BIGINT DEFAULT 0,
+                dnd_removed BIGINT DEFAULT 0,
+                sub_removed BIGINT DEFAULT 0,
+                unsub_removed BIGINT DEFAULT 0,
+                operator_removed BIGINT DEFAULT 0,
                 results_table VARCHAR(255),
                 error_message TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP
+                started_at TIMESTAMP NULL,
+                completed_at TIMESTAMP NULL
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS scrub_job_inputs (
-                id SERIAL PRIMARY KEY,
-                job_id INTEGER REFERENCES scrub_jobs(id) ON DELETE CASCADE,
-                msisdn VARCHAR(20) NOT NULL
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                job_id INT,
+                msisdn VARCHAR(20) NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES scrub_jobs(id) ON DELETE CASCADE,
+                INDEX idx_job_input_msisdn (msisdn),
+                INDEX idx_job_input_job_id (job_id)
+            )
+            """,
+            # SCP Flow Diagram Tables
+            """
+            CREATE TABLE IF NOT EXISTS flows (
+              id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              uuid          VARCHAR(36)   NOT NULL UNIQUE,
+              flow_name     VARCHAR(255)  NOT NULL,
+              service_name  VARCHAR(255)  DEFAULT NULL,
+              short_code    VARCHAR(50)   DEFAULT NULL,
+              call_type     ENUM('IVR','OBD','UNKNOWN') DEFAULT 'IVR',
+              default_lang  VARCHAR(10)   DEFAULT '_E',
+              source        ENUM('xml_upload','builder','pdf_parse') NOT NULL DEFAULT 'xml_upload',
+              filename      VARCHAR(512)  DEFAULT NULL,
+              xml_content   LONGTEXT      DEFAULT NULL,
+              node_count    SMALLINT      DEFAULT 0,
+              edge_count    SMALLINT      DEFAULT 0,
+              description   TEXT          DEFAULT NULL,
+              created_at    DATETIME      DEFAULT CURRENT_TIMESTAMP,
+              updated_at    DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS nodes (
+              id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id       INT UNSIGNED NOT NULL,
+              node_key      VARCHAR(50)  NOT NULL,
+              node_type     VARCHAR(50)  NOT NULL,
+              label         VARCHAR(255) NOT NULL,
+              pos_x         FLOAT        DEFAULT 0,
+              pos_y         FLOAT        DEFAULT 0,
+              created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS node_params (
+              id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              node_id       INT UNSIGNED NOT NULL,
+              param_key     VARCHAR(100) NOT NULL,
+              param_value   TEXT         DEFAULT NULL,
+              FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS edges (
+              id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id       INT UNSIGNED NOT NULL,
+              edge_key      VARCHAR(50)  DEFAULT NULL,
+              source_key    VARCHAR(50)  NOT NULL,
+              target_key    VARCHAR(50)  NOT NULL,
+              edge_type     ENUM('DTMF','DB','Normal')  DEFAULT 'Normal',
+              label         VARCHAR(100) DEFAULT '',
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS prompt_files (
+              id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id       INT UNSIGNED NOT NULL,
+              node_id       INT UNSIGNED NOT NULL,
+              node_label    VARCHAR(255) DEFAULT NULL,
+              node_type     VARCHAR(50)  DEFAULT NULL,
+              full_path     TEXT         DEFAULT NULL,
+              filename      VARCHAR(512) DEFAULT NULL,
+              timeout_sec   SMALLINT     DEFAULT 0,
+              repeat_count  SMALLINT     DEFAULT 0,
+              barge_in      TINYINT   DEFAULT 0,
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE,
+              FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS explanations (
+              id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id         INT UNSIGNED NOT NULL,
+              section_title   VARCHAR(255) NOT NULL,
+              section_body    TEXT         NOT NULL,
+              section_order   TINYINT      DEFAULT 0,
+              generated_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pdf_uploads (
+              id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id         INT UNSIGNED DEFAULT NULL,
+              original_name   VARCHAR(512) NOT NULL,
+              file_size_bytes INT UNSIGNED DEFAULT 0,
+              extracted_text  LONGTEXT     DEFAULT NULL,
+              parse_status    ENUM('pending','success','failed') DEFAULT 'pending',
+              parse_error     TEXT         DEFAULT NULL,
+              uploaded_at     DATETIME     DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE SET NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+              id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+              flow_id     INT UNSIGNED DEFAULT NULL,
+              action      VARCHAR(100) NOT NULL,
+              detail      VARCHAR(512) DEFAULT NULL,
+              ip_address  VARCHAR(45)  DEFAULT NULL,
+              user_agent  VARCHAR(512) DEFAULT NULL,
+              created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
             )
             """
         ]
         try:
             with self.engine.connect() as connection:
+                connection.execute(text("SET FOREIGN_KEY_CHECKS = 0;"))
                 for query in queries:
-                    connection.execute(text(query))
+                    try:
+                        if query.strip():
+                            connection.execute(text(query))
+                    except Exception as qe:
+                        if "Duplicate" not in str(qe) and "already exists" not in str(qe):
+                            print(f"Migration Query Note: {qe}")
+                connection.execute(text("SET FOREIGN_KEY_CHECKS = 1;"))
                 connection.commit()
+
+            # ROBUST COLUMN MIGRATIONS (MySQL Compatible)
+            with self.engine.connect() as connection:
+                def ensure_col(table, col, def_str):
+                    try:
+                        check_sql = f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='{table}' AND COLUMN_NAME='{col}' AND TABLE_SCHEMA='{self.db_name}'"
+                        res = connection.execute(text(check_sql)).mappings().first()
+                        if not res:
+                            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {def_str}"))
+                            connection.commit()
+                    except Exception as e: print(f"Col Migration failed ({table}.{col}): {e}")
+
+                def ensure_idx(table, idx, col_def):
+                    try:
+                        check_sql = f"SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_NAME='{table}' AND INDEX_NAME='{idx}' AND TABLE_SCHEMA='{self.db_name}'"
+                        res = connection.execute(text(check_sql)).mappings().first()
+                        if not res:
+                            connection.execute(text(f"CREATE INDEX {idx} ON {table}({col_def})"))
+                            connection.commit()
+                    except Exception as e: print(f"Idx Migration failed ({table}.{idx}): {e}")
+
+                # Add Essential Statistics Columns to scrub_jobs
+                for col in ["dnd_removed", "sub_removed", "unsub_removed", "operator_removed"]:
+                    ensure_col("scrub_jobs", col, "BIGINT DEFAULT 0")
                 
+                # Add Speed Optimization Columns (suffix8)
+                for table in ["dnd_list", "subscriptions", "unsubscriptions", "scrub_job_inputs"]:
+                    ensure_col(table, "suffix8", "VARCHAR(8) AS (RIGHT(msisdn, 8)) STORED")
+                    ensure_idx(table, f"idx_{table}_suffix8", "suffix8")
+                
+                # Upgrade obdscheduling_details
+                scheduling_cols = [
+                    ('service_id', 'VARCHAR(255)'), ('jobname', 'VARCHAR(255)'),
+                    ('start_date', 'VARCHAR(50)'), ('end_date', 'VARCHAR(50)'),
+                    ('start_time', 'VARCHAR(50)'), ('end_time', 'VARCHAR(50)'),
+                    ('priority', 'VARCHAR(20) DEFAULT "1"'), ('status', 'VARCHAR(50) DEFAULT "Active"'),
+                    ('blackout_hours', 'VARCHAR(50) DEFAULT "0"'), ('max_retry', 'VARCHAR(20) DEFAULT "1"'),
+                    ('remaining_retry', 'VARCHAR(20) DEFAULT "1"'), ('starcopy', 'VARCHAR(20) DEFAULT "0"'),
+                    ('recorddedication', 'VARCHAR(20) DEFAULT "1"'), ('server_ip', 'VARCHAR(50)'),
+                    ('max_obd_count', 'VARCHAR(50)'), ('daywise', 'VARCHAR(50) DEFAULT "0"')
+                ]
+                for col, ctype in scheduling_cols:
+                    ensure_col("obdscheduling_details", col, ctype)
+                
+                # Global Productivity Indexes
+                ensure_idx("dnd_list", "idx_dnd_msisdn", "msisdn")
+                ensure_idx("subscriptions", "idx_subs_msisdn", "msisdn")
+                ensure_idx("unsubscriptions", "idx_unsubs_msisdn", "msisdn")
+                ensure_idx("campaign_targets", "idx_camp_msisdn", "msisdn")
+                ensure_idx("scrub_job_inputs", "idx_job_input_job_id", "job_id")
+                ensure_idx("scrub_job_inputs", "idx_job_input_msisdn", "msisdn")
+
             # Create a default user if empty
             with self.engine.connect() as connection:
                 count = connection.execute(text("SELECT COUNT(*) FROM user_details")).scalar()
@@ -200,15 +385,16 @@ class DatabaseModule:
 
     def create_scrub_job(self, username: str, total_input: int, operator: str | None, options: dict | None):
         """Creates a scrub job metadata entry and returns its ID."""
+        if not self.engine:
+            return None
         from datetime import datetime
         import json
         try:
             with self.engine.connect() as conn:
-                result = conn.execute(
+                conn.execute(
                     text("""
                         INSERT INTO scrub_jobs (username, status, operator, options_json, total_input, created_at)
                         VALUES (:username, :status, :operator, :options_json, :total_input, :created_at)
-                        RETURNING id
                     """),
                     {
                         "username": username,
@@ -219,7 +405,7 @@ class DatabaseModule:
                         "created_at": datetime.utcnow(),
                     },
                 )
-                job_id = result.scalar()
+                job_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
                 conn.commit()
                 return job_id
         except Exception as e:
@@ -228,53 +414,86 @@ class DatabaseModule:
             return None
 
     def add_scrub_job_inputs(self, job_id: int, msisdns: list[str]):
-        """Persists the raw MSISDN base for a job in a separate table (chunk-safe)."""
-        if not msisdns:
-            return True
-        
-        # Use smaller chunks for execute_values to stay within query size limits
-        chunk_size = 50000
-        msisdn_chunks = [msisdns[i:i + chunk_size] for i in range(0, len(msisdns), chunk_size)]
-        
-        raw_conn = None
-        try:
-            raw_conn = self.engine.raw_connection()
-            cursor = raw_conn.cursor()
-            # from psycopg2.extras import execute_values (moved to top-level)
-            
-            for chunk in msisdn_chunks:
-                data = [(job_id, str(m)) for m in chunk if m]
-                if not data:
-                    continue
-                execute_values(
-                    cursor,
-                    "INSERT INTO scrub_job_inputs (job_id, msisdn) VALUES %s",
-                    data,
-                    page_size=10000,
-                )
-                raw_conn.commit()
-            
-            cursor.close()
-            return True
-        except Exception as e:
-            err_msg = f"Failed to persist scrub job inputs: {str(e)}"
-            self.last_error = err_msg
-            print(f"ERROR: {err_msg}")
-            if raw_conn:
-                try:
-                    raw_conn.rollback()
-                except:
-                    pass
+        """Persists the raw MSISDN base for a job in a separate table (Fast Batch)."""
+        if not self.engine or not msisdns:
             return False
-        finally:
-            if raw_conn:
-                try:
-                    raw_conn.close()
-                except:
-                    pass
+            
+        chunk_size = 50000 
+        try:
+            with self.engine.connect() as conn:
+                for i in range(0, len(msisdns), chunk_size):
+                    chunk = msisdns[i:i + chunk_size]
+                    data = [{"jid": job_id, "m": str(m).strip()} for m in chunk if m]
+                    if data:
+                        conn.execute(
+                            text("INSERT INTO scrub_job_inputs (job_id, msisdn) VALUES (:jid, :m)"),
+                            data
+                        )
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error inserting scrub base: {e}")
+            return False
+
+    def perform_job_scrub_sql(self, job_id: int, options: dict, operator_name: str | None = None):
+        """Processes the entire scrubbing flow in pure SQL (Sub-Second)."""
+        metrics = {"dnd": 0, "sub": 0, "unsub": 0, "operator": 0, "final": 0}
+        if not self.engine: return metrics
+        
+        # OPERATOR SERIES MAP (Stripped 0 for suffix/prefix flexibility)
+        ops_map = {
+            "MTN": ["803", "806", "703", "706", "810", "813", "814", "816", "903", "906"],
+            "Airtel": ["802", "808", "701", "708", "812", "902", "901", "907"],
+            "Glo": ["805", "807", "705", "811", "815", "905"],
+            "9mobile": ["809", "817", "818", "909"]
+        }
+        
+        try:
+            with self.engine.begin() as conn:
+                # 1. OPERATOR FILTERING
+                if options.get("operator") and operator_name in ops_map:
+                    prefixes = ops_map[operator_name]
+                    # Create a broad prefix filter (0803, 234803, 803)
+                    conditions = []
+                    for p in prefixes:
+                        conditions.append(f"msisdn LIKE '0{p}%' OR msisdn LIKE '234{p}%' OR msisdn LIKE '{p}%'")
+                    
+                    sql = f"DELETE FROM scrub_job_inputs WHERE job_id = :jid AND NOT ({' OR '.join(conditions)})"
+                    res = conn.execute(text(sql), {"jid": job_id})
+                    metrics["operator"] = res.rowcount
+
+                # 2. DND EXCLUSION (JOIN ON SUFFIX8)
+                if options.get("dnd"):
+                    sql = """DELETE FROM scrub_job_inputs WHERE job_id = :jid 
+                             AND suffix8 IN (SELECT suffix8 FROM dnd_list)"""
+                    res = conn.execute(text(sql), {"jid": job_id})
+                    metrics["dnd"] = res.rowcount
+
+                # 3. SUBSCRIPTIONS EXCLUSION
+                if options.get("sub"):
+                    sql = """DELETE FROM scrub_job_inputs WHERE job_id = :jid 
+                             AND suffix8 IN (SELECT suffix8 FROM subscriptions WHERE status='ACTIVE')"""
+                    res = conn.execute(text(sql), {"jid": job_id})
+                    metrics["sub"] = res.rowcount
+                
+                # 4. UNSUBSCRIBED EXCLUSION
+                if options.get("unsub"):
+                    sql = """DELETE FROM scrub_job_inputs WHERE job_id = :jid 
+                             AND suffix8 IN (SELECT suffix8 FROM unsubscriptions)"""
+                    res = conn.execute(text(sql), {"jid": job_id})
+                    metrics["unsub"] = res.rowcount
+                    
+                # 5. FETCH FINAL COUNT
+                final_res = conn.execute(text("SELECT COUNT(*) FROM scrub_job_inputs WHERE job_id = :jid"), {"jid": job_id})
+                metrics["final"] = final_res.scalar()
+                
+            return metrics
+        except Exception as e:
+            print(f"SQL Scrub Engine Failure: {e}")
+            return metrics
 
     def load_scrub_job_inputs(self, job_id: int, chunk_size: int = 100000):
-        """Generator yielding MSISDN chunks for a job to avoid loading entire base in memory."""
+        """Generator yielding MSISDN chunks for a job (MySQL syntax)."""
         if not self.engine:
             return
         offset = 0
@@ -286,7 +505,7 @@ class DatabaseModule:
                         SELECT msisdn FROM scrub_job_inputs
                         WHERE job_id = :job_id
                         ORDER BY id
-                        OFFSET :offset LIMIT :limit
+                        LIMIT :limit OFFSET :offset
                         """
                     ),
                     {"job_id": job_id, "offset": offset, "limit": chunk_size},
@@ -304,14 +523,32 @@ class DatabaseModule:
         results_table: str | None = None,
         error_message: str | None = None,
         mark_started: bool = False,
+        dnd_removed: int | None = None,
+        sub_removed: int | None = None,
+        unsub_removed: int | None = None,
+        operator_removed: int | None = None,
     ):
         """Updates status and optional metadata of a scrub job."""
+        if not self.engine:
+            return False
         from datetime import datetime
         fields = ["status = :status"]
         params = {"job_id": job_id, "status": status}
         if final_count is not None:
             fields.append("final_count = :final_count")
             params["final_count"] = int(final_count)
+        if dnd_removed is not None:
+            fields.append("dnd_removed = :dnd_removed")
+            params["dnd_removed"] = int(dnd_removed)
+        if sub_removed is not None:
+            fields.append("sub_removed = :sub_removed")
+            params["sub_removed"] = int(sub_removed)
+        if unsub_removed is not None:
+            fields.append("unsub_removed = :unsub_removed")
+            params["unsub_removed"] = int(unsub_removed)
+        if operator_removed is not None:
+            fields.append("operator_removed = :operator_removed")
+            params["operator_removed"] = int(operator_removed)
         if results_table is not None:
             fields.append("results_table = :results_table")
             params["results_table"] = results_table
@@ -386,13 +623,15 @@ class DatabaseModule:
 
     def create_admin_user(self, username, password):
         # import bcrypt (moved to top-level)
+        if not self.engine:
+            return False
         pwd_bytes = password.encode('utf-8')
         salt = bcrypt.gensalt()
         pwd_hash = bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
         try:
             with self.engine.connect() as conn:
                 conn.execute(
-                    text("INSERT INTO user_details (username, password_hash) VALUES (:u, :p) ON CONFLICT (username) DO NOTHING"),
+                    text("INSERT IGNORE INTO user_details (username, password_hash) VALUES (:u, :p)"),
                     {"u": username, "p": pwd_hash}
                 )
                 conn.commit()
@@ -403,6 +642,8 @@ class DatabaseModule:
 
     def verify_admin_user(self, username, password):
         # import bcrypt (moved to top-level)
+        if not self.engine:
+            return False
         try:
             with self.engine.connect() as conn:
                 res = conn.execute(
@@ -422,6 +663,8 @@ class DatabaseModule:
 
     def log_scrub_history(self, stats: dict):
         """Creates an entry in a new table specific for scrub history log."""
+        if not self.engine:
+            return False, "Database engine not initialized"
         msisdn_list = stats.pop("msisdn_list", [])
         results_table = stats.get("results_table", "NONE")
         if msisdn_list:
@@ -433,7 +676,7 @@ class DatabaseModule:
 
         create_query = text("""
             CREATE TABLE IF NOT EXISTS scrub_history_log (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 total_input INT,
                 final_count INT,
                 dnd_removed INT,
@@ -480,6 +723,8 @@ class DatabaseModule:
 
     def get_scrub_history(self):
         """Fetches the last 50 scrub history entries."""
+        if not self.engine:
+            return []
         try:
             # Add results_table safely just in case
             with self.engine.connect() as connection:
@@ -495,11 +740,21 @@ class DatabaseModule:
 
     def save_scheduling_details(self, details: dict):
         """Inserts scheduling details into the database."""
+        if not self.engine:
+            return False
 
-        query = text("""
-            INSERT INTO obdscheduling_details (obd_name, flow_name, msc_ip, cli)
-            VALUES (:obd_name, :flow_name, :msc_ip, :cli)
-        """)
+        # Build query dynamically based on keys in details
+        cols = []
+        placeholders = []
+        for key in details.keys():
+            cols.append(key)
+            placeholders.append(f":{key}")
+        
+        col_str = ", ".join(cols)
+        placeholder_str = ", ".join(placeholders)
+        
+        query = text(f"INSERT INTO obdscheduling_details ({col_str}) VALUES ({placeholder_str})")
+        
         try:
             with self.engine.connect() as connection:
                 connection.execute(query, details)
@@ -515,6 +770,8 @@ class DatabaseModule:
         Saves MSISDNs into a single dynamically created table: obd_d1_{project_name}
         Internally batches inserts to prevent DB overload.
         """
+        if not self.engine:
+            return False, "Database engine not initialized"
         if not msisdns:
             return True, "No MSISDNs to save."
             
@@ -531,7 +788,7 @@ class DatabaseModule:
                 # 1. Create the specific project table
                 create_query = text(f"""
                     CREATE TABLE IF NOT EXISTS {table_name} (
-                        id SERIAL PRIMARY KEY,
+                        id INT AUTO_INCREMENT PRIMARY KEY,
                         msisdn VARCHAR(20) NOT NULL,
                         scheduled BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -558,71 +815,36 @@ class DatabaseModule:
             return False, err_msg
 
     def save_verified_scrub_results(self, msisdns: list):
-        """
-        Saves verified MSISDNs into a unique timestamped table.
-        Used automatically after each scrub.
-        """
-        if not msisdns:
-            return True, "No MSISDNs to save."
-
+        """Legacy - use job-based version for speed."""
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         table_name = f"scrub_results_{timestamp}"
-        
-        # Use smaller chunks for execute_values to stay within query size limits
-        chunk_size = 50000
-        msisdn_chunks = [msisdns[i:i + chunk_size] for i in range(0, len(msisdns), chunk_size)]
-        
-        raw_conn = None
         try:
-            raw_conn = self.engine.raw_connection()
-            cursor = raw_conn.cursor()
-            # 1. Create the specific scrub results table
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    id SERIAL PRIMARY KEY,
-                    msisdn VARCHAR(20) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # 2. Incredible fast chunked bulk insertion
-            # from psycopg2.extras import execute_values (moved to top-level)
-            for chunk in msisdn_chunks:
-                data = [(str(m),) for m in chunk]
-                execute_values(
-                    cursor,
-                    f"INSERT INTO {table_name} (msisdn) VALUES %s",
-                    data,
-                    page_size=10000
-                )
-                raw_conn.commit()
-            
-            cursor.close()
-
-            # Invalidate stats cache
-            try:
-                from .cache_engine import cache_engine
-                cache_engine.delete("db_stats")
-            except:
-                pass
-            
+            with self.engine.connect() as conn:
+                conn.execute(text(f"CREATE TABLE {table_name} (msisdn VARCHAR(20))"))
+                if msisdns:
+                    # Using multi-row insert for decent speed
+                    chunk_size = 10000
+                    for i in range(0, len(msisdns), chunk_size):
+                        conn.execute(text(f"INSERT INTO {table_name} (msisdn) VALUES (:m)"), [{"m": str(m)} for m in msisdns[i:i+chunk_size]])
+                conn.commit()
             return True, table_name
         except Exception as e:
-            err_msg = f"Failed to auto-save scrub results: {str(e)}"
-            print(f"ERROR: {err_msg}")
-            if raw_conn:
-                try:
-                    raw_conn.rollback()
-                except:
-                    pass
-            return False, err_msg
-        finally:
-            if raw_conn:
-                try:
-                    raw_conn.close()
-                except:
-                    pass
+            return False, str(e)
+
+    def save_verified_scrub_job_results(self, job_id: int):
+        """Highly optimized server-side copy from job inputs to a unique result table."""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        table_name = f"scrub_results_{job_id}_{timestamp}"
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(text(f"CREATE TABLE {table_name} (msisdn VARCHAR(20))"))
+                conn.execute(text(f"INSERT INTO {table_name} (msisdn) SELECT msisdn FROM scrub_job_inputs WHERE job_id = :jid"), {"jid": job_id})
+            return True, table_name
+        except Exception as e:
+            print(f"Server-Side Copy Failed: {e}")
+            return False, str(e)
 
 
     def execute_query(self, query, params=None):
@@ -644,6 +866,8 @@ class DatabaseModule:
         """Expands a list of bare MSISDNs into multiple common formats for robust lookup.
         High-performance set-based expansion.
         """
+        if not self.engine:
+            return []
         expanded = set()
         for m in msisdns:
             if not m: continue
@@ -663,18 +887,22 @@ class DatabaseModule:
         return list(expanded)
 
     def _chunked_lookup(self, msisdns, query_template, extra_params=None):
-        """Processes large MSISDN lists in parallel batches for extreme speed."""
+        """Processes large MSISDN lists in parallel batches or via Temporary Table Joins for extreme speed."""
+        if not self.engine:
+            return []
         if not msisdns:
             return []
             
         from .cache_engine import cache_engine
         import concurrent.futures
+        import uuid
         
         # 1. OPTIMIZATION: Small table fetch (Table-level caching)
         import re
         table_match = re.search(r'FROM\s+(\w+)', query_template, re.IGNORECASE)
+        table_name = table_match.group(1) if table_match else "unknown"
+        
         if table_match and self.engine:
-            table_name = table_match.group(1)
             cache_key = f"table_full:{table_name}:{hash(str(extra_params))}"
             cached_data = cache_engine.get(cache_key)
             if cached_data is not None:
@@ -695,128 +923,353 @@ class DatabaseModule:
             except Exception as e:
                 print(f"DEBUG: Optimization check failed: {e}")
 
-        # 2. PARALLEL CHUNKED LOOKUP
+        # 2. MEGA-SPEED OPTIMIZATION: Temporary Table Join for large lists (>15k)
+        if len(msisdns) > 15000:
+            tmp_table = f"tmp_lookup_{uuid.uuid4().hex[:8]}"
+            try:
+                expanded = self._expand_msisdns(msisdns)
+                with self.engine.connect() as conn:
+                    # Create indexed temporary table
+                    conn.execute(text(f"CREATE TEMPORARY TABLE {tmp_table} (msisdn VARCHAR(20) PRIMARY KEY)"))
+                    
+                    # Batch insert into temp table (Fast)
+                    insert_query = text(f"INSERT IGNORE INTO {tmp_table} (msisdn) VALUES (:m)")
+                    batch_size = 20000
+                    for i in range(0, len(expanded), batch_size):
+                        chunk = [{"m": m} for m in expanded[i:i+batch_size]]
+                        conn.execute(insert_query, chunk)
+                    
+                    # Execute JOIN query (Instant with indexes)
+                    final_sql = f"SELECT {table_name}.msisdn {query_template[query_template.upper().find('FROM'):]}"
+                    final_sql = final_sql.replace("WHERE msisdn IN :msisdns", "")
+                    final_sql = final_sql.replace("msisdn IN :msisdns", "1=1")
+                    
+                    # Append the join logic
+                    if "WHERE" in final_sql.upper():
+                        final_sql += f" AND msisdn IN (SELECT msisdn FROM {tmp_table})"
+                    else:
+                        final_sql += f" WHERE msisdn IN (SELECT msisdn FROM {tmp_table})"
+                        
+                    res = conn.execute(text(final_sql), extra_params or {})
+                    res_list = [row[0] for row in res]
+                    
+                    conn.execute(text(f"DROP TEMPORARY TABLE IF EXISTS {tmp_table}"))
+                    conn.commit()
+                    return list(set(res_list))
+            except Exception as e:
+                print(f"DEBUG: Temp table optimization failed, falling back: {e}")
+
+        # 3. FALLBACK: PARALLEL CHUNKED LOOKUP
         expanded = self._expand_msisdns(msisdns)
         results = []
-        chunk_size = 30000 # Larger chunks = fewer calls
+        chunk_size = 30000 
         chunks = [expanded[i:i + chunk_size] for i in range(0, len(expanded), chunk_size)]
         
         def process_chunk(chunk_list):
             try:
                 with self.engine.connect() as connection:
                     params = {"msisdns": chunk_list}
-                    if extra_params:
-                        params.update(extra_params)
-                    
-                    query = text(query_template).bindparams(
-                        bindparam("msisdns", expanding=True)
-                    )
+                    if extra_params: params.update(extra_params)
+                    query = text(query_template).bindparams(bindparam("msisdns", expanding=True))
                     chunk_results = connection.execute(query, params).mappings()
                     return [row['msisdn'] for row in chunk_results if 'msisdn' in row]
             except Exception as e:
-                print(f"Chunk Query Error on {table_name}: {e}")
+                print(f"Chunk Query Error: {e}")
                 return []
 
-        # Utilize ThreadPool to handle parallel network requests to Supabase
-        max_workers = min(10, len(chunks)) if chunks else 1
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_chunk = {executor.submit(process_chunk, c): c for c in chunks}
-            for future in concurrent.futures.as_completed(future_to_chunk):
-                results.extend(future.result())
-            
-        return list(set(results)) # Deduplicate matches
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(chunks) or 1)) as executor:
+            for res_list in executor.map(process_chunk, chunks):
+                results.extend(res_list)
+                
+        return list(set(results))
 
     def check_dnd_bulk(self, msisdns):
         """Checks which given MSISDNs are in the DND list (Batch-Optimized)."""
+        if not self.engine:
+            return []
         query = "SELECT msisdn FROM dnd_list WHERE msisdn IN :msisdns"
         return self._chunked_lookup(msisdns, query)
 
     def check_subscriptions_bulk(self, msisdns, service_id="PROMO"):
         """Checks which MSISDNs are already subscribed (Batch-Optimized)."""
+        if not self.engine:
+            return []
         query = "SELECT msisdn FROM subscriptions WHERE service_id = :service_id AND status = 'ACTIVE' AND msisdn IN :msisdns"
         return self._chunked_lookup(msisdns, query, {"service_id": service_id})
 
     def check_unsubscriptions_bulk(self, msisdns):
         """Checks which MSISDNs have unsubscribed (Batch-Optimized)."""
+        if not self.engine:
+            return []
         query = "SELECT msisdn FROM unsubscriptions WHERE msisdn IN :msisdns"
         return self._chunked_lookup(msisdns, query)
 
     def save_email_csv_data(self, uid, filename, msisdns):
         """Legacy method - redirects to new table method."""
+        if not self.engine:
+            return False, "Database engine not initialized"
         return self.save_email_csv_to_new_table(uid, filename, msisdns)
 
     def save_email_csv_to_new_table(self, uid, filename, msisdns):
         """
-        Saves MSISDNs from an email CSV into a NEW timestamped table.
-        Each scrub creates its own table: email_csv_YYYYMMDD_HHMMSS
-        Uses psycopg2 execute_values for fast bulk insert.
+        Saves MSISDNs from an email CSV into a NEW timestamped table (MySQL).
         """
+        if not self.engine:
+            return False, "Database engine not initialized"
         if not msisdns:
             return True, "No MSISDNs to save."
 
-        from datetime import datetime
-        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         table_name = f"email_csv_{timestamp}"
         
-        # Use smaller chunks for execute_values to stay within query size limits
-        chunk_size = 50000
-        msisdn_chunks = [msisdns[i:i + chunk_size] for i in range(0, len(msisdns), chunk_size)]
-        
-        raw_conn = None
         try:
-            raw_conn = self.engine.raw_connection()
-            cursor = raw_conn.cursor()
-            
-            # 1. Check if UID already processed
-            cursor.execute("SELECT 1 FROM email_sync_log WHERE email_uid = %s", (str(uid),))
-            if cursor.fetchone():
-                cursor.close()
-                return False, f"Email UID {uid} already processed."
-            
-            # 2. Create NEW timestamped table
-            cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    id SERIAL PRIMARY KEY,
-                    msisdn VARCHAR(20) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # 3. Fast chunked bulk insert
-            # from psycopg2.extras import execute_values (moved to top-level)
-            print(f"DEBUG: Bulk inserting {len(msisdns)} rows into {table_name} in chunks...")
-            for chunk in msisdn_chunks:
-                data = [(str(m),) for m in chunk]
-                execute_values(
-                    cursor,
-                    f"INSERT INTO {table_name} (msisdn) VALUES %s",
-                    data,
-                    page_size=10000
-                )
-                raw_conn.commit()
-            
-            # 4. Log the sync
-            cursor.execute(
-                "INSERT INTO email_sync_log (email_uid, filename) VALUES (%s, %s)",
-                (str(uid), f"{filename} -> {table_name}")
-            )
-            raw_conn.commit()
-            
-            cursor.close()
+            with self.engine.connect() as conn:
+                # 1. Check if UID already processed
+                existing = conn.execute(text("SELECT 1 FROM email_sync_log WHERE email_uid = :u"), {"u": str(uid)}).fetchone()
+                if existing:
+                    return False, f"Email UID {uid} already processed."
+                
+                # 2. Create table
+                conn.execute(text(f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        msisdn VARCHAR(20) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                
+                # 3. Bulk insert
+                chunk_size = 5000
+                for i in range(0, len(msisdns), chunk_size):
+                    chunk = msisdns[i:i + chunk_size]
+                    data = [{"msisdn": str(m)} for m in chunk]
+                    conn.execute(text(f"INSERT INTO {table_name} (msisdn) VALUES (:msisdn)"), data)
+                
+                # 4. Log sync
+                conn.execute(text("INSERT INTO email_sync_log (email_uid, filename) VALUES (:u, :f)"),
+                           {"u": str(uid), "f": f"{filename} -> {table_name}"})
+                conn.commit()
             return True, table_name
         except Exception as e:
-            err_msg = f"Email CSV Sync Error: {str(e)}"
-            print(err_msg)
-            if raw_conn:
-                try:
-                    raw_conn.rollback()
-                except:
-                    pass
-            return False, err_msg
-        finally:
-            if raw_conn:
-                try:
-                    raw_conn.close()
-                except:
-                    pass
+            return False, str(e)
+
+    # --- SCP FLOW MANAGEMENT ---
+
+    def save_flow(self, flow_data: dict):
+        """Saves a complete flow (flows, nodes, edges, params, prompts) to MySQL."""
+        if not self.engine:
+            return False, "Database engine not initialized"
+        import uuid
+        flow_uuid = flow_data.get("uuid") or str(uuid.uuid4())
+        flow_name = flow_data.get("flowName", "Unnamed Flow")
+        nodes = flow_data.get("nodes", [])
+        edges = flow_data.get("edges", [])
+        
+        try:
+            with self.engine.connect() as conn:
+                # 1. Flow table
+                existing = conn.execute(text("SELECT id FROM flows WHERE uuid = :u"), {"u": flow_uuid}).fetchone()
+                if existing:
+                    flow_id = existing[0]
+                    conn.execute(text("""
+                        UPDATE flows SET flow_name=:n, service_name=:sn, short_code=:sc, call_type=:ct,
+                        default_lang=:dl, source=:src, filename=:fn, xml_content=:xml, 
+                        node_count=:nc, edge_count=:ec, description=:desc, updated_at=NOW()
+                        WHERE id=:id
+                    """), {
+                        "n": flow_name, "sn": flow_data.get("serviceName"), "sc": flow_data.get("shortCode"),
+                        "ct": flow_data.get("callType", "IVR"), "dl": flow_data.get("defaultLang", "_E"),
+                        "src": flow_data.get("source", "builder"), "fn": flow_data.get("filename"),
+                        "xml": flow_data.get("xmlContent"), "nc": len(nodes), "ec": len(edges),
+                        "desc": flow_data.get("description"), "id": flow_id
+                    })
+                else:
+                    conn.execute(text("""
+                        INSERT INTO flows (uuid, flow_name, service_name, short_code, call_type, default_lang,
+                                         source, filename, xml_content, node_count, edge_count, description)
+                        VALUES (:u, :n, :sn, :sc, :ct, :dl, :src, :fn, :xml, :nc, :ec, :desc)
+                    """), {
+                        "u": flow_uuid, "n": flow_name, "sn": flow_data.get("serviceName"), 
+                        "sc": flow_data.get("shortCode"), "ct": flow_data.get("callType", "IVR"), 
+                        "dl": flow_data.get("defaultLang", "_E"), "src": flow_data.get("source", "builder"), 
+                        "fn": flow_data.get("filename"), "xml": flow_data.get("xmlContent"), 
+                        "nc": len(nodes), "ec": len(edges), "desc": flow_data.get("description")
+                    })
+                    flow_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
+                
+                # 2. Cleanup
+                conn.execute(text("DELETE FROM nodes WHERE flow_id = :id"), {"id": flow_id})
+                conn.execute(text("DELETE FROM edges WHERE flow_id = :id"), {"id": flow_id})
+
+                # 3. Nodes
+                node_map = {}
+                for node in nodes:
+                    conn.execute(text("""
+                        INSERT INTO nodes (flow_id, node_key, node_type, label, pos_x, pos_y)
+                        VALUES (:fid, :key, :typ, :lbl, :x, :y)
+                    """), {
+                        "fid": flow_id, "key": node.get("id"), "typ": node.get("type"),
+                        "lbl": node.get("label", ""), "x": node.get("x", 0), "y": node.get("y", 0)
+                    })
+                    db_node_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
+                    node_map[node.get("id")] = db_node_id
+                    
+                    params = node.get("params", {})
+                    for pk, pv in params.items():
+                        if pv:
+                            conn.execute(text("INSERT INTO node_params (node_id, param_key, param_value) VALUES (:nid, :k, :v)"),
+                                       {"nid": db_node_id, "k": pk, "v": str(pv)})
+                
+                # 4. Edges
+                for edge in edges:
+                    conn.execute(text("""
+                        INSERT INTO edges (flow_id, edge_key, source_key, target_key, edge_type, label)
+                        VALUES (:fid, :ek, :sk, :tk, :et, :l)
+                    """), {
+                        "fid": flow_id, "ek": edge.get("id"), "sk": edge.get("source"),
+                        "tk": edge.get("target"), "et": edge.get("type", "Normal"), "l": edge.get("label", "")
+                    })
+
+                # 5. Extract and Save Prompts
+                conn.execute(text("DELETE FROM prompt_files WHERE flow_id = :id"), {"id": flow_id})
+                for node in nodes:
+                    params = node.get("params", {})
+                    prompt_path = params.get("promptfile") or params.get("contentlist")
+                    if prompt_path and prompt_path != '1' and node.get("type") in ['Navigation', 'Play']:
+                        import re
+                        # Basic filename extraction
+                        clean_path = re.sub(r'^\d+-', '', prompt_path)
+                        filename = clean_path.split('/')[-1] if '/' in clean_path else clean_path
+                        
+                        db_node_id = node_map.get(node.get("id"))
+                        if db_node_id:
+                            conn.execute(text("""
+                                INSERT INTO prompt_files (flow_id, node_id, node_label, node_type, full_path, filename, timeout_sec, repeat_count, barge_in)
+                                VALUES (:fid, :nid, :nl, :nt, :fp, :fn, :ts, :rc, :bi)
+                            """), {
+                                "fid": flow_id, "nid": db_node_id,
+                                "nl": node.get("label"), "nt": node.get("type"),
+                                "fp": prompt_path, "fn": filename,
+                                "ts": int(params.get("timeout") or 0),
+                                "rc": int(params.get("repeatcount") or 0),
+                                "bi": 1 if params.get("bargein") == "true" else 0
+                            })
+                
+                # 6. Audit Log
+                conn.execute(text("""
+                    INSERT INTO audit_log (flow_id, action, detail, ip_address, user_agent)
+                    VALUES (:fid, :act, :det, :ip, :ua)
+                """), {
+                    "fid": flow_id, "act": "save_flow", "det": flow_name,
+                    "ip": None, "ua": "Backend-Agent"
+                })
+
+                conn.commit()
+                return True, flow_uuid
+        except Exception as e:
+            return False, str(e)
+
+    def get_flows(self):
+        return self.execute_query("SELECT * FROM flows ORDER BY updated_at DESC")
+
+    def get_flow(self, flow_uuid: str):
+        try:
+            with self.engine.connect() as conn:
+                flow = conn.execute(text("SELECT * FROM flows WHERE uuid = :u"), {"u": flow_uuid}).mappings().first()
+                if not flow: return None
+                flow = dict(flow)
+                nodes = conn.execute(text("SELECT * FROM nodes WHERE flow_id = :fid"), {"fid": flow['id']}).mappings().all()
+                nodes = [dict(n) for n in nodes]
+                for n in nodes:
+                    params = conn.execute(text("SELECT param_key, param_value FROM node_params WHERE node_id = :nid"), {"nid": n['id']}).mappings().all()
+                    n['params'] = {p['param_key']: p['param_value'] for p in params}
+                edges = conn.execute(text("SELECT * FROM edges WHERE flow_id = :fid"), {"fid": flow['id']}).mappings().all()
+                edges = [dict(e) for e in edges]
+                return {"flow": flow, "nodes": nodes, "edges": edges}
+        except Exception as e:
+            return None
+
+    def delete_flow(self, flow_uuid: str):
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("DELETE FROM flows WHERE uuid = :u"), {"u": flow_uuid})
+                conn.commit()
+                return True
+        except:
+            return False
+
+
+
+    def flush_scrub_queue(self):
+        """Forcefully clears all pending scrub job inputs and resets 'processing' jobs."""
+        if not self.engine: return False
+        try:
+            with self.engine.connect() as conn:
+                # 1. Clear input buffer
+                conn.execute(text("DELETE FROM scrub_job_inputs"))
+                # 2. Mark hanging jobs as cleared/failed
+                conn.execute(text("UPDATE scrub_jobs SET status='cleared' WHERE status='processing'"))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Flush Error: {e}")
+            return False
+
+    def search_flows(self, query: str):
+        if not self.engine:
+            return []
+        try:
+            q = f"%{query}%"
+            with self.engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT id, uuid, flow_name, service_name, short_code, source, node_count, edge_count, created_at
+                    FROM flows WHERE flow_name LIKE :q OR service_name LIKE :q OR short_code LIKE :q
+                    ORDER BY updated_at DESC LIMIT 50
+                """), {"q": q}).mappings().all()
+                return [dict(r) for r in rows]
+        except: return []
+
+    def get_flow_prompts(self, flow_uuid: str):
+        if not self.engine:
+            return []
+        try:
+            with self.engine.connect() as conn:
+                flow = conn.execute(text("SELECT id FROM flows WHERE uuid = :u"), {"u": flow_uuid}).fetchone()
+                if not flow: return []
+                rows = conn.execute(text("SELECT * FROM prompt_files WHERE flow_id = :fid ORDER BY node_label"), {"fid": flow[0]}).mappings().all()
+                return [dict(r) for r in rows]
+        except: return []
+
+    def get_all_prompts(self):
+        if not self.engine:
+            return []
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(text("SELECT * FROM prompt_files ORDER BY filename LIMIT 500")).mappings().all()
+                return [dict(r) for r in rows]
+        except: return []
+
+
+    def get_db_stats(self):
+        """Returns a summary of database counts for the SCP dashboard."""
+        if not self.engine:
+            return {}
+        try:
+            with self.engine.connect() as conn:
+                flows = conn.execute(text("SELECT COUNT(*) FROM flows")).scalar() or 0
+                nodes = conn.execute(text("SELECT COUNT(*) FROM nodes")).scalar() or 0
+                edges = conn.execute(text("SELECT COUNT(*) FROM edges")).scalar() or 0
+                prompts = conn.execute(text("SELECT COUNT(DISTINCT filename) FROM prompt_files")).scalar() or 0
+                # Explanations check (assuming there is an 'explanations' or similar field/table)
+                explanations = conn.execute(text("SELECT COUNT(*) FROM audit_log WHERE action = 'save_explanation'")).scalar() or 0
+                
+                return {
+                    "total_flows": flows,
+                    "total_nodes": nodes,
+                    "total_edges": edges,
+                    "total_prompts": prompts,
+                    "total_explanations": explanations
+                }
+        except Exception as e:
+            print(f"Error fetching DB stats: {e}")
+            return {}

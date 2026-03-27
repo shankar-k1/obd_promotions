@@ -598,6 +598,22 @@
             pointer-events: none;
         }
 
+        .btn-logout {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 10px;
+            text-decoration: none;
+            margin-left: 10px;
+        }
+        .btn-logout:hover {
+            background: var(--accent-red);
+            color: white;
+        }
+
         .api-result {
             margin-top: 8px;
             background: var(--bg-input);
@@ -789,6 +805,8 @@
             <div class="live-indicator">
                 <div class="live-dot"></div>LIVE
             </div>
+            <a href="/logging-logout" class="btn-logout" onclick="document.cookie='logging_session=; Max-Age=0; path=/;'; window.location.reload(); return false;">Logout</a>
+            <button class="btn-sm" style="border-color: var(--accent-amber); color: var(--accent-amber); margin-right: 8px;" onclick="flushQueue()">Flush Scrub Queue</button>
             <button class="btn-sm danger" onclick="clearLogs()">Clear Logs</button>
         </div>
     </div>
@@ -874,43 +892,87 @@
 
         // ─── API ENDPOINTS REGISTRY ───
         const endpoints = [
-            { method: 'GET', path: '/', desc: 'Root — API status & DB info', body: null },
+            // --- CORE & MONITORING ---
+            { method: 'GET', path: '/', desc: 'Root — API status & Environment info', body: null },
             { method: 'GET', path: '/health-check', desc: 'System health & DB connectivity', body: null },
             { method: 'GET', path: '/db-stats', desc: 'Database table counts', body: null },
-            { method: 'GET', path: '/scrub-history', desc: 'Last 50 scrub history entries', body: null },
-            { method: 'GET', path: '/fetch-request', desc: 'Fetch latest OBD email request', body: null },
-            { method: 'GET', path: '/verify-email', desc: 'Send test verification email', body: null },
+            { method: 'GET', path: '/ai-status', desc: 'AI Engine (Gemini) status', body: null },
             { method: 'GET', path: '/logs', desc: 'Fetch system logs', body: null },
-            {
-                method: 'POST', path: '/login', desc: 'Authenticate admin user',
-                body: JSON.stringify({ username: "admin", password: "admin123" }, null, 2)
-            },
-            {
-                method: 'POST', path: '/create-user', desc: 'Create new admin user',
-                body: JSON.stringify({ username: "newuser", password: "pass123" }, null, 2)
-            },
-            {
-                method: 'POST', path: '/scrub', desc: 'Run MSISDN scrubbing pipeline',
-                body: JSON.stringify({ msisdn_list: ["2348001234567", "2348009876543"], operator: "MTN", options: { check_dnd: true, check_sub: true } }, null, 2)
-            },
-            {
-                method: 'POST', path: '/launch-campaign', desc: 'Save MSISDNs to campaign table',
-                body: JSON.stringify({ msisdn_list: ["8001234567"], project_name: "test_campaign" }, null, 2)
-            },
-            {
-                method: 'POST', path: '/schedule-promotion', desc: 'Save scheduling details',
-                body: JSON.stringify({ obd_name: "Test_Promo", flow_name: "Promo Flow 1", msc_ip: "10.200.1.1", cli: "556677" }, null, 2)
-            },
-            { method: 'POST', path: '/trigger-email-sync', desc: 'Start email CSV sync agent (10 min poll)', body: null },
-            {
-                method: 'POST', path: '/log-scrub-entry', desc: 'Log a scrub history entry',
-                body: JSON.stringify({ total_input: 100, final_count: 90, dnd_removed: 5, sub_removed: 3, unsub_removed: 2, operator_removed: 0, msisdn_list: [] }, null, 2)
-            },
-            {
-                method: 'POST', path: '/generate-content', desc: 'Generate AI content via Gemini',
-                body: JSON.stringify({ prompt: "Write a short OBD greeting script" }, null, 2)
-            },
             { method: 'POST', path: '/logs/clear', desc: 'Clear all system logs', body: null },
+            { method: 'POST', path: '/api/flush-scrub-queue', desc: 'Flush all pending scrub jobs', body: null },
+
+            // --- AUTHENTICATION ---
+            { 
+                method: 'POST', path: '/login', desc: 'Admin login — returns JWT', 
+                body: JSON.stringify({ username: "admin", password: "admin123" }, null, 2) 
+            },
+            { 
+                method: 'POST', path: '/create-user', desc: 'Create new admin account', 
+                body: JSON.stringify({ username: "newuser", password: "pass123" }, null, 2) 
+            },
+            { method: 'GET', path: '/auth/me', desc: 'Check current session status', body: null },
+
+            // --- SCRUBBING & CAMPAIGNS ---
+            { 
+                method: 'POST', path: '/scrub', desc: 'Start MSISDN scrubbing job', 
+                body: JSON.stringify({ msisdn_list: ["2348001234567"], operator: "MTN", options: { dnd: true, sub: true } }, null, 2) 
+            },
+            { method: 'GET', path: '/scrub-jobs', desc: 'List recent scrubbing jobs', body: null },
+            { method: 'GET', path: '/scrub-job/{job_id}', desc: 'Track job progress', body: null },
+            { method: 'GET', path: '/scrub-results/{table}', desc: 'Download job result (csv)', body: null },
+            { method: 'GET', path: '/scrub-history', desc: 'Fetch log of all past scrubs', body: null },
+            { 
+                method: 'POST', path: '/launch-campaign', desc: 'Trigger campaign launch', 
+                body: JSON.stringify({ msisdn_list: ["800123"], chunk_size: 5000 }, null, 2) 
+            },
+            { 
+                method: 'POST', path: '/schedule-promotion', desc: 'Save promo scheduling params', 
+                body: JSON.stringify({ obd_name: "Test", msc_ip: "10.0.0.1", cli: "556" }, null, 2) 
+            },
+
+            // --- SCP FLOW BUILDER & PDF ---
+            { method: 'GET', path: '/api/flows', desc: 'List all visual flows in DB', body: null },
+            { 
+                method: 'POST', path: '/api/flows', desc: 'Save flow (Builder JSON)', 
+                body: JSON.stringify({ 
+                    flowName: "New Flow", 
+                    nodes: [{id:"n1", type:"Start", label:"Start", x:100, y:100}],
+                    edges: [] 
+                }, null, 2) 
+            },
+            { method: 'GET', path: '/api/flows/{uuid}', desc: 'Get specific flow details', body: null },
+            { method: 'DELETE', path: '/api/flows/{uuid}', desc: 'Remove flow from DB', body: null },
+            { method: 'GET', path: '/api/flows/search?query=SVC', desc: 'Search flows by name', body: null },
+            { method: 'GET', path: '/api/flows/stats', desc: 'SCP database metrics', body: null },
+            {
+                method: 'POST', path: '/api/flows/{uuid}/explanation', desc: 'Save AI explanations',
+                body: JSON.stringify({ sections: [{title:"Sec 1", body:"Data", order:1}] }, null, 2)
+            },
+            { method: 'GET', path: '/api/flows/{uuid}/prompts', desc: 'Extract prompts from flow', body: null },
+            { method: 'GET', path: '/api/stats/prompts', desc: 'Global prompt library stats', body: null },
+
+            // --- AI & GENERATION ---
+            { 
+                method: 'POST', path: '/generate-flow-json', desc: 'AI: Doc text -> Flow JSON', 
+                body: JSON.stringify({ doc_text: "Navigation Node for Support..." }, null, 2) 
+            },
+            { 
+                method: 'POST', path: '/generate-flow-json-from-xml', desc: 'AI: XML -> Flow JSON', 
+                body: JSON.stringify({ xml_content: "<flow>...</flow>" }, null, 2) 
+            },
+            { 
+                method: 'POST', path: '/generate-content', desc: 'AI: General text generation', 
+                body: JSON.stringify({ prompt: "Write an IVR script" }, null, 2) 
+            },
+
+            // --- VOIP & INTEGRATION ---
+            { method: 'GET', path: '/fetch-request', desc: 'Email: Fetch latest client request', body: null },
+            { method: 'POST', path: '/trigger-email-sync', desc: 'Manual trigger for email agent', body: null },
+            { 
+                method: 'POST', path: '/trigger-voip-call', desc: 'VOIP: Start test call', 
+                body: JSON.stringify({ msisdn: "800", shortcode: "556", script: "Test" }, null, 2) 
+            },
+            { method: 'GET', path: '/voip/virtual-calls', desc: 'Simulator: Check active signals', body: null },
         ];
 
         // ─── RENDER API CARDS ───
@@ -1109,6 +1171,17 @@
         renderApiCards();
         fetchLogs();
         setInterval(fetchLogs, 2000);
+        async function flushQueue() {
+            if (!confirm("Are you sure you want to PURGE the entire scrub queue? This will stop all pending jobs.")) return;
+            try {
+                const res = await fetch('/api/flush-scrub-queue', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message || "Queue Flushed");
+                location.reload();
+            } catch (e) {
+                alert("Failed to flush queue: " + e.message);
+            }
+        }
     </script>
 </body>
 

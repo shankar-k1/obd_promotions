@@ -1,62 +1,62 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 
 :root {
-  /* Ultra-Premium Accent Palette */
-  --accent-cyan: #00f2fe;
-  --accent-blue: #0077ff;
-  --accent-purple: #9d50bb;
-  --accent-emerald: #00f5a0;
-  --accent-rose: #ff0080;
-  --accent-amber: #f9d423;
+  /* SCP-Inspired Ultra-Premium Palette */
+  --accent-cyan: #60a5fa;
+  --accent-blue: #3b82f6;
+  --accent-purple: #c084fc;
+  --accent-emerald: #34d399;
+  --accent-rose: #f87171;
+  --accent-amber: #fbbf24;
 
-  /* Deep Space Glass (Dark Theme) */
-  --bg-main: #050505;
-  --bg-gradient-1: rgba(0, 119, 255, 0.12);
-  --bg-gradient-2: rgba(157, 80, 187, 0.12);
-  --bg-gradient-3: rgba(0, 245, 160, 0.08);
-  --bg-glass: rgba(10, 10, 15, 0.65);
-  --bg-glass-heavy: rgba(5, 5, 10, 0.85);
-  --text-main: #ffffff;
-  --text-muted: #a0aec0;
-  --text-dim: #718096;
-  --glass-border: rgba(255, 255, 255, 0.12);
-  --glass-border-bright: rgba(255, 255, 255, 0.25);
-  --shadow-lg: 0 30px 60px -12px rgba(0, 0, 0, 0.8);
-  --neon-glow: 0 0 30px rgba(0, 242, 254, 0.4);
-  --selection-bg: rgba(0, 242, 254, 0.3);
+  /* Deep Space SCP Theme (Dark) */
+  --bg-main: #0b1220;
+  --bg-gradient-1: rgba(96, 165, 250, 0.08); /* Blue tint */
+  --bg-gradient-2: rgba(52, 211, 153, 0.06); /* Green tint */
+  --bg-gradient-3: rgba(13, 23, 38, 0.95);
+  --bg-glass: rgba(14, 24, 41, 0.7);
+  --bg-glass-heavy: rgba(11, 18, 32, 0.9);
+  --text-main: #e8f4ff;
+  --text-muted: #8aafd4;
+  --text-dim: #4d7299;
+  --glass-border: #1c2e47;
+  --glass-border-bright: rgba(138, 175, 212, 0.3);
+  --shadow-lg: 0 20px 50px -12px rgba(0, 0, 0, 0.6);
+  --neon-glow: 0 0 30px rgba(96, 165, 250, 0.2);
+  --selection-bg: rgba(96, 165, 250, 0.3);
 }
 
 [data-theme='light'] {
-  --bg-main: #f8fafc;
-  --bg-gradient-1: rgba(34, 211, 238, 0.05);
-  --bg-gradient-2: rgba(59, 130, 246, 0.05);
+  --bg-main: #f1f5f9;
+  --bg-gradient-1: rgba(59, 130, 246, 0.05);
+  --bg-gradient-2: rgba(52, 211, 153, 0.05);
   --bg-gradient-3: rgba(255, 255, 255, 0.8);
   --bg-glass: rgba(255, 255, 255, 0.7);
   --bg-glass-heavy: rgba(255, 255, 255, 0.9);
   --text-main: #0f172a;
-  --text-muted: #475569;
+  --text-muted: #334155;
   --text-dim: #64748b;
-  --glass-border: rgba(0, 0, 0, 0.05);
+  --glass-border: #cbd5e1;
   --glass-border-bright: rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 8px 32px rgba(31, 38, 135, 0.07);
-  --neon-glow: 0 0 20px rgba(34, 211, 238, 0.1);
-  --selection-bg: rgba(34, 211, 238, 0.1);
+  --neon-glow: 0 0 20px rgba(96, 165, 250, 0.1);
+  --selection-bg: rgba(96, 165, 250, 0.1);
   --card-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.05);
 }
 
 [data-theme='midnight'] {
-  --bg-main: #050510;
-  --bg-gradient-1: rgba(129, 140, 248, 0.15);
-  --bg-gradient-2: rgba(79, 70, 229, 0.15);
-  --bg-gradient-3: rgba(168, 85, 247, 0.05);
-  --bg-glass: rgba(10, 10, 30, 0.75);
-  --bg-glass-heavy: rgba(10, 10, 30, 0.95);
-  --text-main: #ffffff;
+  --bg-main: #05070a;
+  --bg-gradient-1: rgba(99, 102, 241, 0.12);
+  --bg-gradient-2: rgba(167, 139, 250, 0.1);
+  --bg-gradient-3: rgba(0, 0, 0, 0.95);
+  --bg-glass: rgba(7, 9, 15, 0.85);
+  --bg-glass-heavy: rgba(5, 7, 12, 0.98);
+  --text-main: #f8fafc;
   --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --text-dim: #475569;
   --accent-cyan: #818cf8;
-  --glass-border: rgba(129, 140, 248, 0.2);
-  --neon-glow: 0 0 30px rgba(129, 140, 248, 0.3);
+  --glass-border: #1e293b;
+  --neon-glow: 0 0 40px rgba(99, 102, 241, 0.2);
 }
 
 * {
@@ -85,14 +85,14 @@ button {
 body {
   background-color: var(--bg-main);
   color: var(--text-main);
-  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', 'Outfit', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   margin: 0;
   line-height: 1.6;
-  font-size: 0.875rem;
+  font-size: 14px;
   background-image: 
-    radial-gradient(circle at 20% 30%, var(--bg-gradient-1) 0%, transparent 40%),
-    radial-gradient(circle at 80% 70%, var(--bg-gradient-2) 0%, transparent 40%);
+    radial-gradient(circle at 10% 20%, var(--bg-gradient-1) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, var(--bg-gradient-2) 0%, transparent 40%);
   background-attachment: fixed;
   background-size: cover;
   transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
@@ -140,16 +140,16 @@ header {
 }
 
 .logo-text {
-  font-family: 'Outfit', sans-serif;
-  font-size: 3.5rem;
-  font-weight: 800;
+  font-family: 'Inter', sans-serif;
+  font-size: 3rem;
+  font-weight: 900;
   letter-spacing: -0.05em;
   line-height: 1;
   background: linear-gradient(135deg, #fff 0%, var(--accent-cyan) 50%, var(--accent-blue) 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 20px rgba(34, 211, 238, 0.3));
+  filter: drop-shadow(0 0 20px rgba(96, 165, 250, 0.3));
   margin: 0;
 }
 
@@ -496,8 +496,8 @@ header {
 .stat-card {
   background: var(--bg-glass);
   border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  padding: 16px;
+  border-radius: 14px;
+  padding: 18px 20px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
@@ -511,7 +511,7 @@ header {
 }
 
 .stat-label {
-  font-size: 0.65rem;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -522,8 +522,8 @@ header {
 
 .stat-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 1.5rem;
-  font-weight: 800;
+  font-size: 28px;
+  font-weight: 700;
   color: var(--text-main);
   text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
 }
@@ -533,8 +533,8 @@ header {
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--glass-border);
-  border-radius: 28px;
-  padding: 32px;
+  border-radius: 20px;
+  padding: 24px;
   box-shadow: var(--shadow-lg);
   position: relative;
   overflow: hidden;
@@ -597,7 +597,7 @@ header {
 
 .label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 11px;
   font-weight: 800;
   color: var(--text-dim);
   margin-bottom: 10px;
@@ -609,13 +609,13 @@ header {
   width: 100%;
   background: var(--bg-glass-heavy);
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 16px 20px;
+  border-radius: 12px;
+  padding: 14px 18px;
   color: var(--text-main);
   outline: none;
-  font-family: inherit;
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-family: 'Inter', inherit;
+  font-size: 14px;
+  font-weight: 500;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
 }
@@ -632,13 +632,13 @@ header {
   width: 100%;
   background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
   border: none;
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 14px 24px;
   color: white;
   font-weight: 800;
-  font-size: 0.813rem;
+  font-size: 13px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 10px 20px rgba(0,0,0,0.15);
@@ -653,11 +653,11 @@ header {
 .btn-secondary {
   background: var(--bg-glass);
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 14px 24px;
   color: var(--text-main);
   font-weight: 700;
-  font-size: 0.75rem;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   cursor: pointer;
@@ -1187,7 +1187,7 @@ button:disabled,
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
@@ -1197,15 +1197,29 @@ button:disabled,
 }
 
 .modal-content {
-  background: var(--bg-glass);
-  border: 1px solid var(--glass-border);
+  background: var(--bg-glass-heavy);
+  border: 1px solid var(--glass-border-bright);
   border-radius: 32px;
   padding: 40px;
-  width: 90%;
-  max-width: 500px;
+  width: 95%;
+  max-width: 800px;
+  margin: 0 auto;
+  max-height: 85vh; /* Keep it within the screen */
+  overflow-y: auto; /* Internal scrolling */
   box-shadow: 0 40px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(34, 211, 238, 0.1);
   position: relative;
+  scrollbar-width: thin; /* Visible but thin scrollbar for Firefox */
+  scrollbar-color: var(--accent-blue) transparent;
   animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+  background: var(--accent-blue);
+  border-radius: 10px;
 }
 
 .modal-header {

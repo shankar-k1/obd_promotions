@@ -2,6 +2,7 @@ import os
 import re
 import json
 from dotenv import load_dotenv
+from modules.xml_flow_parser import XMLFlowParser
 
 load_dotenv()
 
@@ -9,30 +10,79 @@ class OBDPromptAgent:
     def __init__(self):
         self.api_key = os.getenv("LLM_API_KEY")
         self.model = None
+        self.ollama_model = "minimax-m2.7:cloud"
+        
+        # Check if Ollama is available
+        try:
+            import ollama
+            self.ollama_client = ollama
+            # Quick check if model exists
+            tags = self.ollama_client.list()
+            model_names = [m.model for m in tags.models]
+            if self.ollama_model not in model_names:
+                # If target model missing, pick the first available
+                if model_names:
+                    self.ollama_model = model_names[0]
+            print(f"DEBUG AI: Initialized Ollama with model {self.ollama_model}")
+        except Exception as e:
+            print(f"DEBUG AI: Ollama not available ({e})")
+            self.ollama_client = None
 
         if self.api_key and self.api_key != "your_gemini_api_key_here":
             try:
                 from google import genai
                 self.client = genai.Client(api_key=self.api_key)
                 self.model = "gemini-2.0-flash"
-                print("DEBUG AI: Initialized Gemini 2.0 Flash")
+                print("DEBUG AI: Initialized Gemini 2.0 Flash (Fallback)")
             except ImportError:
                 try:
                     import google.generativeai as genai_legacy
                     genai_legacy.configure(api_key=self.api_key)
                     self.model_legacy = genai_legacy.GenerativeModel('gemini-1.5-flash')
                     self.model = "legacy"
-                    print("DEBUG AI: Initialized Legacy SDK (Gemini 1.5 Flash)")
+                    print("DEBUG AI: Initialized Legacy SDK (Gemini 1.5 Flash - Fallback)")
                 except ImportError:
                     print("DEBUG AI Error: No Gemini SDKs found!")
 
+    def get_status(self):
+        """Returns the current active AI configuration."""
+        if self.ollama_client:
+            return {
+                "status": "Online",
+                "model": self.ollama_model,
+                "provider": "Ollama (Local)"
+            }
+        if self.model:
+            return {
+                "status": "Online",
+                "model": self.model if self.model != "legacy" else "gemini-1.5-flash",
+                "provider": "Google Gemini (Fallback)"
+            }
+        return {
+            "status": "Offline",
+            "detail": "No AI engine initialized"
+        }
+
     def _generate(self, prompt):
-        """Unified generation method supporting both SDK versions."""
+        """Unified generation method with primary Ollama and fallback Gemini."""
+        # 1. Attempt Ollama
+        if self.ollama_client:
+            try:
+                print(f"DEBUG AI: Generating with Ollama ({self.ollama_model})...")
+                response = self.ollama_client.chat(model=self.ollama_model, messages=[
+                    {'role': 'user', 'content': prompt},
+                ])
+                if response and 'message' in response and 'content' in response['message']:
+                    return response['message']['content']
+            except Exception as e:
+                print(f"DEBUG AI Error (Ollama): {str(e)}. Attempting Gemini fallback...")
+
+        # 2. Attempt Gemini
         if not self.model:
             print("DEBUG AI Error: No model initialized!")
             return None
             
-        print(f"DEBUG AI: Generating with prompt (Length: {len(prompt)} chars)...")
+        print(f"DEBUG AI: Generating with Gemini (Length: {len(prompt)} chars)...")
         try:
             if self.model == "legacy":
                 response = self.model_legacy.generate_content(prompt)
@@ -46,7 +96,7 @@ class OBDPromptAgent:
                 if response and hasattr(response, 'text'):
                     return response.text
         except Exception as e:
-            print(f"DEBUG AI Error during generation: {str(e)}")
+            print(f"DEBUG AI Error (Gemini): {str(e)}")
             return None
         return None
 
@@ -200,3 +250,33 @@ Return ONLY this JSON structure, nothing else:
     def generate_flow_mermaid(self, context):
         result = self._generate(f"Create Mermaid TD graph for: {context}. Raw code only.")
         return result or "graph TD\n  A[Start] --> B[End]"
+    def generate_plain_description_from_xml(self, xml_content):
+        """Returns a high-level plain English explanation of the campaign logic."""
+        print(f"DEBUG AI: Generating Plain English explanation from XML (Length: {len(xml_content)})")
+        
+        parsed_data = XMLFlowParser.parse_xml(xml_content)
+        flow_summary = XMLFlowParser.get_flow_summary(parsed_data)
+        
+        # Limit summary length for LLM if it's too big
+        if len(flow_summary) > 20000:
+            flow_summary = flow_summary[:20000] + "\n...[truncated for length]..."
+
+        prompt = f"""
+        You are an expert campaign designer. Below is a structured summary of an IVR/OBD campaign flow extracted from SCP configuration XML.
+        
+        CAMPAIGN FLOW SUMMARY:
+        {flow_summary}
+        
+        TASK:
+        Provide a professional, clear, and high-level "Plain English" description of this campaign.
+        - Start with the Campaign Name and its primary objective (e.g. "This is a Loyalty Retention campaign...").
+        - Describe the main user journey (e.g. "When a user calls/receives a call, first we check X, then we play Y...").
+        - Explain key decision points (e.g. "If the user is Active, they go to the Main Menu, otherwise they are redirected to...").
+        - Include any special processing logic found (e.g. "We set the user's language preference based on...").
+        - Keep it human-readable, not technical. Avoid mentioning XML tags or mxCells.
+        
+        Format the output in clean Markdown using '### Heading' for each section so it can be parsed correctly.
+        """
+        
+        result = self._generate(prompt)
+        return result or "Unable to generate description from the provided XML."

@@ -48,18 +48,17 @@ import {
 } from 'lucide-react';
 const getApiBase = () => {
   if (typeof window === 'undefined') return 'http://localhost:8000';
-  if (window.location.hostname === 'localhost') return 'http://localhost:8000';
+  const { hostname, port } = window.location;
 
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (!envUrl) return 'http://localhost:8000';
+  // If on port 8000 (standard production) or empty port (tunnels/localtunnel), use relative paths
+  if (port === '8000' || port === '' || port === '443') return '';
 
-  // If it's a protocol-less host from Render (e.g. obd-backend.onrender.com)
-  if (!envUrl.startsWith('http')) {
-    return `https://${envUrl}`;
-  }
-  return envUrl;
+  // On localhost dev mode? Use port 8000
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://localhost:8000';
+
+  // Others (Network IPs)? Use current host on 8000
+  return `http://${hostname}:8000`;
 };
-
 const API_BASE = getApiBase();
 
 export default function Dashboard() {
@@ -86,6 +85,7 @@ export default function Dashboard() {
   const [cleanedMsisdns, setCleanedMsisdns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [xmlContent, setXmlContent] = useState('');
+  const [xmlExplanation, setXmlExplanation] = useState('');
   const [studioMode, setStudioMode] = useState('strategy'); // 'strategy' or 'xml'
   const [pdfLoading, setPdfLoading] = useState(false);
   const [dbStats, setDbStats] = useState({ dnd_count: null, sub_count: null, unsub_count: null });
@@ -120,14 +120,14 @@ export default function Dashboard() {
   // VOIP State
   const [voipMsisdn, setVoipMsisdn] = useState('');
   const [voipShortcode, setVoipShortcode] = useState('5566');
-  const [voipScript, setVoipScript] = useState('Hello, this is a test call from the Outsmart Global OBD platform. Have a great day!');
+  const [voipScript, setVoipScript] = useState('Hello, this is a test call from the Mobicom Global OBD platform. Have a great day!');
   const [voipLoading, setVoipLoading] = useState(false);
   const [voipResult, setVoipResult] = useState(null);
   const [activeVirtualCall, setActiveVirtualCall] = useState(null);
   const [publicUrl, setPublicUrl] = useState(null);
 
-  // Theme State & Persistence
-  const [theme, setTheme] = useState('dark');
+  // Force Light Theme for Visibility
+  const [theme, setTheme] = useState('light');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [historyData, setHistoryData] = useState([]);
@@ -226,16 +226,16 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('obd-theme') || 'dark';
-    setTheme(savedTheme);
-    document.documentElement.setAttribute('data-theme', savedTheme);
+    // Always force light theme for this build as requested
+    setTheme('light');
+    document.documentElement.setAttribute('data-theme', 'light');
+    localStorage.setItem('obd-theme', 'light');
   }, []);
 
   const themes = ['dark', 'light', 'midnight'];
 
   const handleVocalSyncClick = () => {
-    const token = localStorage.getItem('obd_token');
-    window.open(`http://localhost:3001?theme=${theme}${token ? `&token=${token}` : ''}`, '_blank');
+    setCurrentView('vocalsync');
   };
   const toggleTheme = () => {
     const currentIndex = themes.indexOf(theme);
@@ -294,6 +294,7 @@ export default function Dashboard() {
 
   const pollJobStatus = async (jobId) => {
     try {
+      console.log(`POLLING JOB: ${jobId}...`);
       const res = await fetch(`${API_BASE}/scrub-job/${jobId}`, {
         method: 'GET',
         headers: {
@@ -301,13 +302,27 @@ export default function Dashboard() {
           ...getAuthHeaders()
         }
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error(`POLLING FAILED for job ${jobId}`);
+        return;
+      }
       const data = await res.json();
       const job = data.job;
       setScrubJobs(prev => {
         const others = prev.filter(j => j.id !== job.id);
         return [job, ...others].slice(0, 20);
       });
+      // Update live counts and session stats from job metadata
+      if (job.dnd_removed !== undefined) {
+        setSessionStats(prev => ({
+          ...prev,
+          dnd: job.dnd_removed || 0,
+          sub: job.sub_removed || 0,
+          unsub: job.unsub_removed || 0,
+          operator: job.operator_removed || 0
+        }));
+      }
+
       if (job.status === 'COMPLETED') {
         setActiveJobId(null);
         setCounts(prev => ({
@@ -324,6 +339,7 @@ export default function Dashboard() {
             });
             if (resultsRes.ok) {
               const resultsData = await resultsRes.json();
+              console.log(`FETCHED ${resultsData.msisdns?.length} CLEAN RECORDS.`);
               setCleanedMsisdns(resultsData.msisdns || []);
             }
           } catch (e) {
@@ -343,6 +359,7 @@ export default function Dashboard() {
     if (!targetList.length) return;
 
     setLoading(true);
+    setCleanedMsisdns([]); // Clear previous results immediately
     try {
       const res = await fetch(`${API_BASE}/scrub`, {
         method: 'POST',
@@ -397,7 +414,7 @@ export default function Dashboard() {
           if (updatedJob && (updatedJob.status === 'COMPLETED' || updatedJob.status === 'FAILED')) {
             clearInterval(pollInterval);
           }
-        }, 3000);
+        }, 500);
       }
     } catch (err) {
       console.error("Scrubbing failed", err);
@@ -584,6 +601,19 @@ export default function Dashboard() {
       } else {
         setFlowError('The AI Architect could not detect logical nodes in this input. Try being more specific or simplifying the strategy.');
       }
+
+      // If XML, also get explanation
+      if (studioMode === 'xml') {
+        const expRes = await fetch(`${API_BASE}/generate-flow-explanation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ xml_content: xmlContent }),
+        });
+        if (expRes.ok) {
+          const expData = await expRes.json();
+          setXmlExplanation(expData.explanation);
+        }
+      }
     } catch (err) {
       console.error('Flow generation failed', err);
       setFlowError(`AI Architect Failed: ${err.message}`);
@@ -654,6 +684,20 @@ export default function Dashboard() {
     }
   };
 
+  const stopAllCalls = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/voip/stop-calls`, { 
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      alert(data.message || "All virtual sessions stopped.");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to stop calls.");
+    }
+  };
+
   // Virtual VOIP Polling & Simulation
   useEffect(() => {
     let pollInterval;
@@ -703,128 +747,83 @@ export default function Dashboard() {
     return (
       <div
         className="flex items-center justify-center relative overflow-hidden"
-        data-theme={theme}
         style={{
           position: 'fixed',
           inset: 0,
           width: '100vw',
           height: '100vh',
-          background: 'var(--bg-main)',
+          background: '#f8fafc', // Clean minimalist light grey background
           fontFamily: "'Inter', sans-serif",
+          fontSize: '18px',
           overflow: 'auto',
           zIndex: 9999,
-          color: 'var(--text-main)'
+          color: '#1e293b'
         }}
       >
-        {/* Background Accents */}
-        <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full opacity-[0.15] blur-[140px]" style={{ background: 'var(--accent-cyan)' }} />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.1] blur-[120px]" style={{ background: 'var(--accent-purple)' }} />
-
-        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, var(--text-main) 1px, transparent 0)', backgroundSize: '40px 40px' }} />
-
-        {/* Theme Dropdown for Login */}
-        <div style={{
-          position: 'absolute',
-          top: '40px',
-          right: '40px',
-          zIndex: 10000
-        }}>
-          <div className="relative">
-            <button
-              onClick={toggleTheme}
-              className="flex items-center gap-3 px-5 h-12 rounded-2xl glass-action shadow-xl hover:scale-105 transition-all"
-              style={{ background: 'var(--bg-glass-heavy)', border: '1px solid var(--glass-border)', color: 'var(--text-main)', cursor: 'pointer' }}
-            >
-              <div className="flex flex-col items-start leading-tight">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">Theme</span>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">{theme}</span>
-              </div>
-              <Palette size={14} className="ml-2" />
-            </button>
-          </div>
-        </div>
-
-        {/* Top-left Brand Logo and System Status */}
-        <div style={{ position: 'absolute', top: '30px', left: '40px', zIndex: 10 }}>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 font-black text-xl tracking-tighter" style={{ color: 'var(--text-main)' }}>
-              <Database size={24} className="text-emerald-400" />
-              <span className="text-emerald-400">BLACKNGREEN</span>
-            </div>
-
-            {/* Login Page Status Indicators */}
-            <div className="hidden sm:flex items-center gap-4 px-4 h-10 rounded-xl bg-white-5 border border-white-10 backdrop-blur-md ml-4">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full" style={{ background: apiColor, boxShadow: `0 0 8px ${apiColor}` }} />
-                <span className="text-[8px] font-black uppercase tracking-widest opacity-40">Backend</span>
-              </div>
-              <div className="w-[1px] h-3 bg-white-10" />
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full" style={{ background: aiColor, boxShadow: `0 0 8px ${aiColor}` }} />
-                <span className="text-[8px] font-black uppercase tracking-widest opacity-40">AI Engine</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.4 }}
-          className="relative z-10 w-full px-3"
-          style={{ maxWidth: '420px' }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="relative z-10 w-full px-4"
+          style={{ maxWidth: '440px' }}
         >
           <div style={{
-            background: 'var(--bg-glass-heavy)',
+            background: 'white',
             borderRadius: '24px',
-            backdropFilter: 'blur(30px)',
-            border: '1px solid var(--glass-border)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.08)',
             overflow: 'hidden',
           }}>
-            <div style={{ padding: '40px 32px 32px', textAlign: 'center' }}>
-              <div className="mx-auto w-14 h-14 rounded-2xl flex items-center justify-center mb-6 shadow-md" style={{ background: 'var(--bg-glass)', border: '1px solid var(--glass-border)' }}>
-                <LogOut size={24} style={{ transform: 'rotate(180deg)', color: 'var(--text-main)' }} />
+            <div style={{ padding: '48px 40px 32px', textAlign: 'center' }}>
+              {/* Branded Logo */}
+              <div style={{ marginBottom: '24px' }}>
+                <img
+                  src="/logo.png"
+                  alt="blackNgreen"
+                  style={{ height: '70px', margin: '0 auto', display: 'block' }}
+                />
               </div>
 
               <h1 style={{
-                fontSize: '1.5rem',
-                fontWeight: '700',
+                fontSize: '1.8rem',
+                fontWeight: '800',
                 margin: '0 0 8px 0',
-                color: 'var(--text-main)',
+                color: '#0f172a',
+                letterSpacing: '-0.025em'
               }}>
-                {isCreatingUser ? 'Create an account' : 'Sign in with email'}
+                {isCreatingUser ? 'Create Account' : 'Welcome Back'}
               </h1>
 
               <p style={{
-                fontSize: '0.875rem',
-                color: 'var(--text-dim)',
+                fontSize: '1rem',
+                color: '#64748b',
                 margin: 0,
                 lineHeight: 1.5,
-                fontWeight: '500'
+                fontWeight: '400'
               }}>
-                Secure access to military-grade MSISDN sanitation & communication protocols.
+                Sign in to manage your OBD promotions.
               </p>
             </div>
 
-            <div style={{ padding: '0 32px 40px' }}>
-              <form onSubmit={isCreatingUser ? handleCreateUser : handleLogin} className="flex flex-col gap-4">
-                <div className="flex flex-col gap-3">
+            <div style={{ padding: '0 40px 48px' }}>
+              <form onSubmit={isCreatingUser ? handleCreateUser : handleLogin} className="flex flex-col gap-5">
+                <div className="flex flex-col gap-4">
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <User size={16} />
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <User size={18} />
                     </div>
                     <input
                       type="text"
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/5 dark:bg-white/5"
+                      className="w-full pl-12 pr-4 py-4 rounded-xl"
                       style={{
-                        border: '1px solid var(--glass-border)',
-                        fontSize: '0.9rem',
-                        color: 'var(--text-main)',
+                        border: '1px solid #cbd5e1',
+                        fontSize: '1rem',
+                        background: '#f1f5f9',
+                        color: '#0f172a',
                         outline: 'none',
                         transition: 'all 0.2s ease',
                       }}
-                      placeholder="Email address"
+                      placeholder="Username / Email"
                       value={loginCreds.username}
                       onChange={(e) => setLoginCreds({ ...loginCreds, username: e.target.value })}
                       required
@@ -832,16 +831,17 @@ export default function Dashboard() {
                   </div>
 
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-200">
-                      <Lock size={14} />
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                      <Lock size={18} />
                     </div>
                     <input
                       type="password"
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/5 dark:bg-white/5"
+                      className="w-full pl-12 pr-4 py-4 rounded-xl"
                       style={{
-                        border: '1px solid var(--glass-border)',
-                        fontSize: '0.9rem',
-                        color: 'var(--text-main)',
+                        border: '1px solid #cbd5e1',
+                        fontSize: '1rem',
+                        background: '#f1f5f9',
+                        color: '#0f172a',
                         outline: 'none',
                         transition: 'all 0.2s ease',
                       }}
@@ -853,28 +853,14 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="text-right">
-                  <span
-                    onClick={() => {
-                      setIsCreatingUser(!isCreatingUser);
-                      setLoginError('');
-                      setSuccessMsg('');
-                    }}
-                    style={{ fontSize: '0.8rem', color: 'var(--text-main)', cursor: 'pointer', fontWeight: '500' }}
-                    className="hover:underline"
-                  >
-                    {isCreatingUser ? 'Already have an account?' : 'Forgot password or register?'}
-                  </span>
-                </div>
-
                 {successMsg && (
-                  <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', color: 'var(--accent-emerald)', padding: '12px', borderRadius: '12px', fontSize: '0.85rem', textAlign: 'center' }}>
+                  <div style={{ background: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', padding: '12px', borderRadius: '12px', fontSize: '0.9rem', textAlign: 'center' }}>
                     {successMsg}
                   </div>
                 )}
 
                 {loginError && (
-                  <div style={{ background: 'rgba(244, 63, 94, 0.1)', border: '1px solid rgba(244, 63, 94, 0.2)', color: 'var(--accent-rose)', padding: '12px', borderRadius: '12px', fontSize: '0.85rem', textAlign: 'center' }}>
+                  <div style={{ background: '#fff1f2', border: '1px solid #f43f5e', color: '#9f1239', padding: '12px', borderRadius: '12px', fontSize: '0.9rem', textAlign: 'center' }}>
                     {loginError}
                   </div>
                 )}
@@ -882,61 +868,32 @@ export default function Dashboard() {
                 <button
                   type="submit"
                   disabled={isLoggingIn}
-                  className="w-full py-3 mt-2 rounded-xl transition-all font-semibold shadow-md active:scale-[0.98]"
+                  className="w-full py-4 mt-2 rounded-xl transition-all font-bold shadow-lg active:scale-[0.98]"
                   style={{
-                    background: 'var(--text-main)',
-                    color: 'var(--bg-main)',
+                    background: '#0ea5e9', // Branded primary color
+                    color: 'white',
                     opacity: isLoggingIn ? 0.7 : 1,
-                    cursor: isLoggingIn ? 'not-allowed' : 'pointer'
+                    cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+                    fontSize: '1.1rem'
                   }}
                 >
                   {isLoggingIn ? 'Authenticating...' : (isCreatingUser ? 'Create Account' : 'Sign In')}
                 </button>
+
+                <div className="text-center mt-2">
+                  <span
+                    onClick={() => {
+                      setIsCreatingUser(!isCreatingUser);
+                      setLoginError('');
+                      setSuccessMsg('');
+                    }}
+                    style={{ fontSize: '0.9rem', color: '#64748b', cursor: 'pointer', fontWeight: '500' }}
+                    className="hover:text-blue-600 underline"
+                  >
+                    {isCreatingUser ? 'Already have an account?' : 'Need an account? Contact Admin'}
+                  </span>
+                </div>
               </form>
-
-              {/* Social Login Divider */}
-              <div className="relative flex py-6 items-center">
-                <div className="flex-grow border-t" style={{ borderColor: 'var(--glass-border)' }}></div>
-                <span className="flex-shrink-0 mx-4 text-[0.7rem] text-slate-400 font-medium">Or sign in with</span>
-                <div className="flex-grow border-t" style={{ borderColor: 'var(--glass-border)' }}></div>
-              </div>
-
-              {/* Social Login Buttons */}
-              <div className="flex justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setLoginError('Google Auth integration pending.')}
-                  className="flex-1 py-3 rounded-xl flex items-center justify-center transition-colors border shadow-sm active:scale-95 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10"
-                  style={{ borderColor: 'var(--glass-border)' }}
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginError('GitHub Auth integration pending.')}
-                  className="flex-1 py-3 rounded-xl flex items-center justify-center transition-colors border shadow-sm active:scale-95 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10"
-                  style={{ borderColor: 'var(--glass-border)', color: 'var(--text-main)' }}
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-3.975-1.395-.15-.45-.825-1.395-1.41-1.68-.465-.225-1.14-.84-.015-.855 1.065-.015 1.83.975 2.085 1.395 1.2 2.07 3.165 1.485 3.93 1.14.12-.87.465-1.485.855-1.83-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.48.405.9 1.23.9 2.475 0 1.785-.015 3.225-.015 3.645 0 .33.225.705.84.57 4.755-1.59 8.16-6.075 8.16-11.385C24 5.37 18.63 0 12 0z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLoginError('Apple Auth integration pending.')}
-                  className="flex-1 py-3 rounded-xl flex items-center justify-center transition-colors border shadow-sm active:scale-95 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10"
-                  style={{ borderColor: 'var(--glass-border)', color: 'var(--text-main)' }}
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M16.365 7.114c.732-.888 1.226-2.13 1.092-3.374-1.07.043-2.366.713-3.12 1.611-.676.804-1.268 2.078-1.114 3.298 1.187.091 2.394-.632 3.142-1.535zm-2.825 2.768c-1.42 0-2.68.966-3.411.966-.732 0-1.801-.893-2.95-.893-1.516 0-2.91.879-3.69 2.228-1.583 2.748-.403 6.816 1.144 9.043.757 1.09 1.649 2.315 2.825 2.27 1.137-.046 1.57-.736 2.94-.736 1.369 0 1.764.736 2.957.712 1.23-.021 2.008-1.115 2.755-2.203.864-1.26 1.222-2.484 1.243-2.549-.026-.011-2.383-.914-2.411-3.637-.024-2.278 1.859-3.376 1.947-3.424-1.066-1.558-2.716-1.77-3.349-1.777z" />
-                  </svg>
-                </button>
-              </div>
             </div>
           </div>
         </motion.div>
@@ -1187,6 +1144,66 @@ export default function Dashboard() {
     );
   }
 
+  if (currentView === 'vocalsync') {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('obd_token') : '';
+    const src = `http://localhost:3001?theme=${theme}${token ? `&token=${token}` : ''}`;
+
+    return (
+      <div className="dashboard-container relative" data-theme={theme} style={{ padding: 0, height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-main)' }}>
+        {/* Top App Bar */}
+        <div
+          className="z-[60] w-full"
+          style={{
+            background: 'transparent',
+            backdropFilter: 'blur(30px)',
+            borderBottom: '1px solid var(--glass-border)',
+            width: '100%',
+          }}
+        >
+          <div className="flex items-center justify-between w-full px-10 py-5">
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-6">
+                <button
+                  onClick={() => setCurrentView('landing')}
+                  className="w-14 h-14 rounded-3xl glass-action flex items-center justify-center hover:scale-110 transition-all shadow-2xl relative group overflow-hidden"
+                  style={{ background: 'var(--accent-purple)', border: '2px solid rgba(255,255,255,0.2)' }}
+                  aria-label="Back to System Navigator"
+                >
+                  <Menu size={24} className="text-black" strokeWidth={2.5} />
+                </button>
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-2xl font-black tracking-tighter" style={{ color: 'var(--text-main)' }}>VOCAL SYNC AI</h1>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-widest bg-purple-500/20 text-purple-400 border border-purple-500/30">PRO HUB</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-60">Neural Synthesis Pipeline Active</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Embedded Application */}
+        <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
+          <iframe
+            src={src}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              background: 'transparent'
+            }}
+            title="Vocal Sync Core"
+            allow="accelerometer; autoplay; camera; gyroscope; microphone; clipboard-read; clipboard-write;"
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (currentView === 'flowdiagram') {
     return (
       <div className="dashboard-container relative" data-theme={theme} style={{ padding: 0 }}>
@@ -1215,7 +1232,6 @@ export default function Dashboard() {
                 </button>
 
                 <div className="flex flex-col leading-none">
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Outsmart OBD</span>
                   <span className="text-[16px] font-black uppercase tracking-wider">IVR Flow Diagram</span>
                 </div>
               </div>
@@ -1362,7 +1378,6 @@ export default function Dashboard() {
               </button>
 
               <div className="flex flex-col leading-none">
-                <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Outsmart OBD</span>
                 <span className="text-[16px] font-black uppercase tracking-wider">Scrubbing Studio</span>
               </div>
             </div>
@@ -1513,7 +1528,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="flex justify-between items-center opacity-40 mb-6">
-                  <span className="text-[9px] font-bold uppercase tracking-[0.2em]">OBD OUTSMART v2.0</span>
+                  <span className="text-[9px] font-bold uppercase tracking-[0.2em]">MOBICOM OBD v2.0</span>
                   <span className="text-[9px] font-bold uppercase tracking-tighter">© 2026 PR</span>
                 </div>
                 <button
@@ -1810,12 +1825,12 @@ export default function Dashboard() {
               className="btn-primary glow-hover"
               style={{ padding: '12px 16px', fontSize: '0.813rem', flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', position: 'relative' }}
               onClick={handleRunScrub}
-              disabled={loading}
+              disabled={loading || activeJobId}
             >
-              {loading ? (
+              {(loading || activeJobId) ? (
                 <>
                   <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  SCRUBBING PIPELINE...
+                  {activeJobId ? 'SCRUBBING IN PROGRESS...' : 'INITIALIZING PIPELINE...'}
                 </>
               ) : (
                 <>
@@ -1998,7 +2013,25 @@ export default function Dashboard() {
                   </>
                 ) : (
                   <>
-                    <label className="label flex items-center gap-2" style={{ fontSize: '0.7rem' }}><Database size={12} /> XML Blueprint</label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="label flex items-center gap-2 m-0" style={{ fontSize: '0.7rem' }}><Database size={12} /> XML Blueprint</label>
+                      <label className="cursor-pointer text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors bg-cyan-400/10 px-3 py-1 rounded-lg border border-cyan-400/20">
+                        <UploadCloud size={10} className="inline mr-1" /> UPLOAD XML
+                        <input
+                          type="file"
+                          accept=".xml"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (re) => setXmlContent(re.target.result);
+                              reader.readAsText(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
                     <textarea
                       className="input-field font-mono text-[10px]"
                       rows="8"
@@ -2038,10 +2071,25 @@ export default function Dashboard() {
                   </div>
                 )}
                 {reactFlowData.nodes && reactFlowData.nodes.length > 0 && (
-                  <CampaignFlowVisualizer
-                    nodes={reactFlowData.nodes}
-                    edges={reactFlowData.edges}
-                  />
+                  <div className="flex-1 flex flex-col h-full overflow-hidden">
+                    <div className="flex-1 min-h-[300px] border-b border-slate-800/50">
+                      <CampaignFlowVisualizer
+                        nodes={reactFlowData.nodes}
+                        edges={reactFlowData.edges}
+                      />
+                    </div>
+                    {xmlExplanation && (
+                      <div className="p-6 bg-slate-900/50 overflow-y-auto max-h-[250px] scrollbar-hide">
+                        <div className="flex items-center gap-2 mb-4">
+                          <div className="w-1 h-3 rounded bg-cyan-400" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-cyan-400">Flow Description (Plain English)</span>
+                        </div>
+                        <div className="prose prose-invert prose-xs max-w-none text-slate-300 leading-relaxed font-medium markdown-content" style={{ fontSize: '0.75rem', whiteSpace: 'pre-wrap' }}>
+                          {xmlExplanation}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -2117,19 +2165,30 @@ export default function Dashboard() {
                 />
               </div>
 
-              <button
-                type="submit"
-                className="btn-primary w-full shadow-2xl transition-all hover:scale-[1.02]"
-                style={{ background: 'linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%)', height: '54px' }}
-                disabled={voipLoading || !voipMsisdn}
-              >
-                {voipLoading ? (
-                  <Activity className="animate-spin mr-2 inline" size={18} />
-                ) : (
-                  <Zap size={18} className="mr-2 inline" />
-                )}
-                {voipLoading ? 'CONNECTING VOIP...' : 'TRIGGER VOIP CALL NOW'}
-              </button>
+              <div className="flex gap-4">
+                <button
+                  type="submit"
+                  className="btn-primary flex-1 shadow-2xl transition-all hover:scale-[1.02]"
+                  style={{ background: 'linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%)', height: '54px' }}
+                  disabled={voipLoading || !voipMsisdn}
+                >
+                  {voipLoading ? (
+                    <Activity className="animate-spin mr-2 inline" size={18} />
+                  ) : (
+                    <Zap size={18} className="mr-2 inline" />
+                  )}
+                  {voipLoading ? 'CONNECTING VOIP...' : 'TRIGGER VOIP CALL NOW'}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={stopAllCalls}
+                  className="px-6 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all font-bold text-[11px] uppercase tracking-widest flex items-center justify-center whitespace-nowrap shadow-lg"
+                  title="Force stop all active sessions"
+                >
+                  Terminate All
+                </button>
+              </div>
             </form>
 
             <AnimatePresence>
@@ -2219,8 +2278,8 @@ export default function Dashboard() {
       {/* MODAL OVERLAY */}
       {
         isScheduleModalOpen && (
-          <div className="modal-overlay overflow-y-auto scrollbar-hide" style={{ padding: '40px 0' }} onClick={() => setIsScheduleModalOpen(false)}>
-            <div className="modal-content !max-w-[800px] my-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', inset: 0, zIndex: 10000 }} onClick={() => setIsScheduleModalOpen(false)}>
+            <div className="modal-content" style={{ maxHeight: '90vh', overflowY: 'auto', display: 'block', width: '95%', maxWidth: '800px' }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header border-b border-white-5 pb-6 mb-8">
                 <div className="flex items-center gap-4 mb-2">
                   <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
@@ -2232,363 +2291,363 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              
+
               <div className="pr-2">
 
-              {/* ── Section 1: Identity ── */}
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-4 rounded bg-emerald-400" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Identity & Routing</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Hash size={14} className="text-cyan-400" />
-                      Service ID
-                    </label>
-                    <input type="number" className="input-field font-mono" placeholder="e.g. 1001"
-                      value={scheduleData.service_id}
-                      onChange={(e) => setScheduleData({ ...scheduleData, service_id: e.target.value })} />
+                {/* ── Section 1: Identity ── */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-1 h-4 rounded bg-emerald-400" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">Identity & Routing</span>
                   </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Layout size={14} className="text-emerald-400" />
-                      Job Name / OBD Name
-                    </label>
-                    <input type="text" className="input-field" placeholder="e.g. Summer_Campaign_V1"
-                      value={scheduleData.obd_name}
-                      onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value, jobname: e.target.value })} />
-                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Unique namespace for reporting (max 25 chars)</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Zap size={14} className="text-amber-400" />
-                      Voice/Flow Logic
-                    </label>
-                    <div className="relative">
-                      <select className="input-field pr-10 appearance-none"
-                        value={scheduleData.flow_name}
-                        onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}>
-                        <option value="" disabled>Select execution logic...</option>
-                        <option value="Promo Flow 1">Standard Promotion Engine</option>
-                        <option value="Holiday Special">Holiday Multi-tier Logic</option>
-                        {mermaidFlow && <option value="AI Generated Flow">AI Generated Scrubber Flow</option>}
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
-                        <ChevronRight size={16} className="rotate-90" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Hash size={14} className="text-cyan-400" />
+                        Service ID
+                      </label>
+                      <input type="number" className="input-field font-mono" placeholder="e.g. 1001"
+                        value={scheduleData.service_id}
+                        onChange={(e) => setScheduleData({ ...scheduleData, service_id: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Layout size={14} className="text-emerald-400" />
+                        Job Name / OBD Name
+                      </label>
+                      <input type="text" className="input-field" placeholder="e.g. Summer_Campaign_V1"
+                        value={scheduleData.obd_name}
+                        onChange={(e) => setScheduleData({ ...scheduleData, obd_name: e.target.value, jobname: e.target.value })} />
+                      <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Unique namespace for reporting (max 25 chars)</p>
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Zap size={14} className="text-amber-400" />
+                        Voice/Flow Logic
+                      </label>
+                      <div className="relative">
+                        <select className="input-field pr-10 appearance-none"
+                          value={scheduleData.flow_name}
+                          onChange={(e) => setScheduleData({ ...scheduleData, flow_name: e.target.value })}>
+                          <option value="" disabled>Select execution logic...</option>
+                          <option value="Promo Flow 1">Standard Promotion Engine</option>
+                          <option value="Holiday Special">Holiday Multi-tier Logic</option>
+                          {mermaidFlow && <option value="AI Generated Flow">AI Generated Scrubber Flow</option>}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Info size={14} className="text-purple-400" />
-                      CLI Masking / Caller ID
-                    </label>
-                    <input type="text" className="input-field" placeholder="e.g. 556677"
-                      value={scheduleData.cli}
-                      onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })} />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 2: Schedule ── */}
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-4 rounded bg-amber-400" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Schedule & Timing</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Calendar size={14} className="text-emerald-400" />
-                      Start Date
-                    </label>
-                    <input type="date" className="input-field font-mono"
-                      value={scheduleData.start_date}
-                      onChange={(e) => setScheduleData({ ...scheduleData, start_date: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Calendar size={14} className="text-rose-400" />
-                      End Date
-                    </label>
-                    <input type="date" className="input-field font-mono"
-                      value={scheduleData.end_date}
-                      onChange={(e) => setScheduleData({ ...scheduleData, end_date: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Clock size={14} className="text-cyan-400" />
-                      Start Time
-                    </label>
-                    <input type="time" className="input-field font-mono"
-                      value={scheduleData.start_time}
-                      onChange={(e) => setScheduleData({ ...scheduleData, start_time: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Clock size={14} className="text-rose-400" />
-                      End Time
-                    </label>
-                    <input type="time" className="input-field font-mono"
-                      value={scheduleData.end_time}
-                      onChange={(e) => setScheduleData({ ...scheduleData, end_time: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <AlertTriangle size={14} className="text-amber-400" />
-                      Blackout Hours
-                    </label>
-                    <input type="number" className="input-field font-mono" placeholder="0" min="0"
-                      value={scheduleData.blackout_hours}
-                      onChange={(e) => setScheduleData({ ...scheduleData, blackout_hours: e.target.value })} />
-                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Hours to skip dialling (e.g. night hours)</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Layers size={14} className="text-purple-400" />
-                      Day Wise
-                    </label>
-                    <div className="relative">
-                      <select className="input-field pr-10 appearance-none font-mono"
-                        value={scheduleData.daywise}
-                        onChange={(e) => setScheduleData({ ...scheduleData, daywise: e.target.value })}>
-                        <option value="0">0 — All Days</option>
-                        <option value="1">1 — Weekdays Only</option>
-                        <option value="2">2 — Weekends Only</option>
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
-                        <ChevronRight size={16} className="rotate-90" />
-                      </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Info size={14} className="text-purple-400" />
+                        CLI Masking / Caller ID
+                      </label>
+                      <input type="text" className="input-field" placeholder="e.g. 556677"
+                        value={scheduleData.cli}
+                        onChange={(e) => setScheduleData({ ...scheduleData, cli: e.target.value })} />
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* ── Section 3: Connection & Server ── */}
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-4 rounded bg-cyan-400" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">Connection & Server</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Activity size={14} className="text-emerald-400" />
-                      MSC Connection IP Path
-                    </label>
-                    <input type="text" className="input-field font-mono" placeholder="10.200.XXX.XXX"
-                      value={scheduleData.msc_ip}
-                      onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })} />
+                {/* ── Section 2: Schedule ── */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-1 h-4 rounded bg-amber-400" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Schedule & Timing</span>
                   </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Server size={14} className="text-cyan-400" />
-                      Server IP
-                    </label>
-                    <input type="text" className="input-field font-mono" placeholder="e.g. 192.168.1.100"
-                      value={scheduleData.server_ip}
-                      onChange={(e) => setScheduleData({ ...scheduleData, server_ip: e.target.value })} />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 4: Execution Parameters ── */}
-              <div className="mb-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-4 rounded bg-purple-400" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">Execution Parameters</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 px-2">
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <BarChart3 size={14} className="text-amber-400" />
-                      Priority
-                    </label>
-                    <input type="number" className="input-field font-mono" placeholder="1" min="1" max="10"
-                      value={scheduleData.priority}
-                      onChange={(e) => setScheduleData({ ...scheduleData, priority: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <ShieldCheck size={14} className="text-emerald-400" />
-                      Status
-                    </label>
-                    <div className="relative">
-                      <select className="input-field pr-10 appearance-none"
-                        value={scheduleData.status}
-                        onChange={(e) => setScheduleData({ ...scheduleData, status: e.target.value })}>
-                        <option value="Active">Active</option>
-                        <option value="Paused">Paused</option>
-                        <option value="Scheduled">Scheduled</option>
-                        <option value="Completed">Completed</option>
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
-                        <ChevronRight size={16} className="rotate-90" />
-                      </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Calendar size={14} className="text-emerald-400" />
+                        Start Date
+                      </label>
+                      <input type="date" className="input-field font-mono"
+                        value={scheduleData.start_date}
+                        onChange={(e) => setScheduleData({ ...scheduleData, start_date: e.target.value })} />
                     </div>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2">
-                      <Phone size={14} className="text-cyan-400" />
-                      Max OBD Count
-                    </label>
-                    <input type="number" className="input-field font-mono" placeholder="e.g. 50000" min="0"
-                      value={scheduleData.max_obd_count}
-                      onChange={(e) => setScheduleData({ ...scheduleData, max_obd_count: e.target.value })} />
-                    <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Max concurrent OBD calls</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Section 5: Retry & System (greyed out fields) ── */}
-              <div className="mb-2">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-1 h-4 rounded bg-slate-500" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Retry & System Defaults</span>
-                  <span className="text-[8px] text-slate-600 ml-2 bg-slate-800 px-2 py-0.5 rounded">READ-ONLY</span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 px-2">
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2 opacity-50">
-                      <Repeat size={14} className="text-slate-500" />
-                      Max Retry
-                    </label>
-                    <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
-                      value={scheduleData.max_retry} readOnly disabled />
-                    <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2 opacity-50">
-                      <Repeat size={14} className="text-slate-500" />
-                      Remaining Retry
-                    </label>
-                    <input type="number" className="input-field font-mono" placeholder="1" min="0"
-                      value={scheduleData.remaining_retry}
-                      onChange={(e) => setScheduleData({ ...scheduleData, remaining_retry: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2 opacity-50">
-                      <Star size={14} className="text-slate-500" />
-                      Record Dedication
-                    </label>
-                    <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
-                      value={scheduleData.recorddedication} readOnly disabled />
-                    <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="label flex items-center gap-2 mb-2 opacity-50">
-                      <Copy size={14} className="text-slate-500" />
-                      Star Copy
-                    </label>
-                    <div className="relative">
-                      <select className="input-field pr-10 appearance-none font-mono"
-                        value={scheduleData.starcopy}
-                        onChange={(e) => setScheduleData({ ...scheduleData, starcopy: e.target.value })}>
-                        <option value="0">0 — Disabled</option>
-                        <option value="1">1 — Enabled</option>
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
-                        <ChevronRight size={16} className="rotate-90" />
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Calendar size={14} className="text-rose-400" />
+                        End Date
+                      </label>
+                      <input type="date" className="input-field font-mono"
+                        value={scheduleData.end_date}
+                        onChange={(e) => setScheduleData({ ...scheduleData, end_date: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Clock size={14} className="text-cyan-400" />
+                        Start Time
+                      </label>
+                      <input type="time" className="input-field font-mono"
+                        value={scheduleData.start_time}
+                        onChange={(e) => setScheduleData({ ...scheduleData, start_time: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Clock size={14} className="text-rose-400" />
+                        End Time
+                      </label>
+                      <input type="time" className="input-field font-mono"
+                        value={scheduleData.end_time}
+                        onChange={(e) => setScheduleData({ ...scheduleData, end_time: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <AlertTriangle size={14} className="text-amber-400" />
+                        Blackout Hours
+                      </label>
+                      <input type="number" className="input-field font-mono" placeholder="0" min="0"
+                        value={scheduleData.blackout_hours}
+                        onChange={(e) => setScheduleData({ ...scheduleData, blackout_hours: e.target.value })} />
+                      <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Hours to skip dialling (e.g. night hours)</p>
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Layers size={14} className="text-purple-400" />
+                        Day Wise
+                      </label>
+                      <div className="relative">
+                        <select className="input-field pr-10 appearance-none font-mono"
+                          value={scheduleData.daywise}
+                          onChange={(e) => setScheduleData({ ...scheduleData, daywise: e.target.value })}>
+                          <option value="0">0 — All Days</option>
+                          <option value="1">1 — Weekdays Only</option>
+                          <option value="2">2 — Weekends Only</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex gap-4 mt-8 pt-6 border-t border-white-5 sticky bottom-0 -mx-8 px-8 pb-2 bg-[var(--bg-main)] z-20">
-                <button
-                  className="btn-secondary flex-1 py-4 font-bold tracking-widest text-xs uppercase"
-                  onClick={() => setIsScheduleModalOpen(false)}
-                >
-                  Discard Configuration
-                </button>
-                {successMsg ? (
-                  <div className="flex-[2] flex flex-col items-center gap-4 py-4 animate-in fade-in">
-                    <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center">
-                      <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
+                {/* ── Section 3: Connection & Server ── */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-1 h-4 rounded bg-cyan-400" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">Connection & Server</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-2">
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Activity size={14} className="text-emerald-400" />
+                        MSC Connection IP Path
+                      </label>
+                      <input type="text" className="input-field font-mono" placeholder="10.200.XXX.XXX"
+                        value={scheduleData.msc_ip}
+                        onChange={(e) => setScheduleData({ ...scheduleData, msc_ip: e.target.value })} />
                     </div>
-                    <div className="text-center">
-                      <div className="text-emerald-400 font-black text-sm tracking-widest uppercase mb-2">Campaign Launched Successfully!</div>
-                      <div className="text-xs opacity-60 font-mono space-y-1">
-                        <div>📋 Project: <span className="text-emerald-300 font-bold">{scheduleData.obd_name}</span></div>
-                        <div>📊 MSISDNs Exported: <span className="text-emerald-300 font-bold">{cleanedMsisdns?.length?.toLocaleString() || '0'}</span></div>
-                        <div>📡 MSC IP: <span className="text-emerald-300 font-bold">{scheduleData.msc_ip}</span></div>
-                        <div>🎵 Flow: <span className="text-emerald-300 font-bold">{scheduleData.flow_name}</span></div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Server size={14} className="text-cyan-400" />
+                        Server IP
+                      </label>
+                      <input type="text" className="input-field font-mono" placeholder="e.g. 192.168.1.100"
+                        value={scheduleData.server_ip}
+                        onChange={(e) => setScheduleData({ ...scheduleData, server_ip: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Section 4: Execution Parameters ── */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-1 h-4 rounded bg-purple-400" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-400">Execution Parameters</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 px-2">
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <BarChart3 size={14} className="text-amber-400" />
+                        Priority
+                      </label>
+                      <input type="number" className="input-field font-mono" placeholder="1" min="1" max="10"
+                        value={scheduleData.priority}
+                        onChange={(e) => setScheduleData({ ...scheduleData, priority: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <ShieldCheck size={14} className="text-emerald-400" />
+                        Status
+                      </label>
+                      <div className="relative">
+                        <select className="input-field pr-10 appearance-none"
+                          value={scheduleData.status}
+                          onChange={(e) => setScheduleData({ ...scheduleData, status: e.target.value })}>
+                          <option value="Active">Active</option>
+                          <option value="Paused">Paused</option>
+                          <option value="Scheduled">Scheduled</option>
+                          <option value="Completed">Completed</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
                       </div>
                     </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2">
+                        <Phone size={14} className="text-cyan-400" />
+                        Max OBD Count
+                      </label>
+                      <input type="number" className="input-field font-mono" placeholder="e.g. 50000" min="0"
+                        value={scheduleData.max_obd_count}
+                        onChange={(e) => setScheduleData({ ...scheduleData, max_obd_count: e.target.value })} />
+                      <p className="text-[9px] text-slate-600 mt-1 px-1 uppercase tracking-tight">Max concurrent OBD calls</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Section 5: Retry & System (greyed out fields) ── */}
+                <div className="mb-2">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-1 h-4 rounded bg-slate-500" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Retry & System Defaults</span>
+                    <span className="text-[8px] text-slate-600 ml-2 bg-slate-800 px-2 py-0.5 rounded">READ-ONLY</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6 px-2">
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2 opacity-50">
+                        <Repeat size={14} className="text-slate-500" />
+                        Max Retry
+                      </label>
+                      <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
+                        value={scheduleData.max_retry} readOnly disabled />
+                      <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2 opacity-50">
+                        <Repeat size={14} className="text-slate-500" />
+                        Remaining Retry
+                      </label>
+                      <input type="number" className="input-field font-mono" placeholder="1" min="0"
+                        value={scheduleData.remaining_retry}
+                        onChange={(e) => setScheduleData({ ...scheduleData, remaining_retry: e.target.value })} />
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2 opacity-50">
+                        <Star size={14} className="text-slate-500" />
+                        Record Dedication
+                      </label>
+                      <input type="number" className="input-field font-mono !bg-slate-800/60 !text-slate-500 !border-slate-700/40 cursor-not-allowed"
+                        value={scheduleData.recorddedication} readOnly disabled />
+                      <p className="text-[8px] text-slate-600 mt-1 px-1">System default · greyed out</p>
+                    </div>
+                    <div className="form-group">
+                      <label className="label flex items-center gap-2 mb-2 opacity-50">
+                        <Copy size={14} className="text-slate-500" />
+                        Star Copy
+                      </label>
+                      <div className="relative">
+                        <select className="input-field pr-10 appearance-none font-mono"
+                          value={scheduleData.starcopy}
+                          onChange={(e) => setScheduleData({ ...scheduleData, starcopy: e.target.value })}>
+                          <option value="0">0 — Disabled</option>
+                          <option value="1">1 — Enabled</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4 mt-8 pt-6 border-t border-white-5 sticky bottom-0 -mx-8 px-8 pb-2 bg-[var(--bg-main)] z-20">
+                  <button
+                    className="btn-secondary flex-1 py-4 font-bold tracking-widest text-xs uppercase"
+                    onClick={() => setIsScheduleModalOpen(false)}
+                  >
+                    Discard Configuration
+                  </button>
+                  {successMsg ? (
+                    <div className="flex-[2] flex flex-col items-center gap-4 py-4 animate-in fade-in">
+                      <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center">
+                        <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-emerald-400 font-black text-sm tracking-widest uppercase mb-2">Campaign Launched Successfully!</div>
+                        <div className="text-xs opacity-60 font-mono space-y-1">
+                          <div>📋 Project: <span className="text-emerald-300 font-bold">{scheduleData.obd_name}</span></div>
+                          <div>📊 MSISDNs Exported: <span className="text-emerald-300 font-bold">{cleanedMsisdns?.length?.toLocaleString() || '0'}</span></div>
+                          <div>📡 MSC IP: <span className="text-emerald-300 font-bold">{scheduleData.msc_ip}</span></div>
+                          <div>🎵 Flow: <span className="text-emerald-300 font-bold">{scheduleData.flow_name}</span></div>
+                        </div>
+                      </div>
+                      <button
+                        className="mt-2 px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold tracking-widest text-xs uppercase transition-all active:scale-95"
+                        onClick={() => {
+                          setIsScheduleModalOpen(false);
+                          setSuccessMsg('');
+                        }}
+                      >
+                        ✓ Done
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      className="mt-2 px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold tracking-widest text-xs uppercase transition-all active:scale-95"
-                      onClick={() => {
-                        setIsScheduleModalOpen(false);
+                      className="btn-primary !bg-emerald-500 hover:!bg-emerald-400 shadow-emerald-500/20 flex-[2] py-4 rounded-2xl font-bold tracking-widest text-xs uppercase flex items-center justify-center gap-3 transition-all active:scale-95"
+                      disabled={isLaunching}
+                      onClick={async () => {
+                        if (isLaunching) return;
+                        setIsLaunching(true);
                         setSuccessMsg('');
+                        try {
+                          // 1. Save Scheduling Details
+                          const schedRes = await fetch(`${API_BASE}/schedule-promotion`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(scheduleData)
+                          });
+
+                          if (!schedRes.ok) {
+                            const err = await schedRes.json();
+                            setSuccessMsg('');
+                            setIsLaunching(false);
+                            alert(`Scheduling Failed: ${err.detail}`);
+                            return;
+                          }
+
+                          // 2. Launch Campaign (save MSISDNs)
+                          const launchRes = await fetch(`${API_BASE}/launch-campaign`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              msisdn_list: cleanedMsisdns,
+                              project_name: scheduleData.obd_name
+                            })
+                          });
+
+                          if (launchRes.ok) {
+                            const data = await launchRes.json();
+                            setSuccessMsg('SUCCESS');
+                            setIsLaunching(false);
+                          } else {
+                            const err = await launchRes.json();
+                            setIsLaunching(false);
+                            alert(`Launch Failed: ${err.detail || 'Internal Server Error'}`);
+                          }
+                        } catch (err) {
+                          setIsLaunching(false);
+                          alert(`Network Error: ${err.message}`);
+                        }
                       }}
                     >
-                      ✓ Done
+                      <Zap size={16} fill="white" className={isLaunching ? "animate-spin" : ""} />
+                      {isLaunching ? "Launching..." : "Initialize & Launch Campaign"}
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    className="btn-primary !bg-emerald-500 hover:!bg-emerald-400 shadow-emerald-500/20 flex-[2] py-4 rounded-2xl font-bold tracking-widest text-xs uppercase flex items-center justify-center gap-3 transition-all active:scale-95"
-                    disabled={isLaunching}
-                    onClick={async () => {
-                      if (isLaunching) return;
-                      setIsLaunching(true);
-                      setSuccessMsg('');
-                      try {
-                        // 1. Save Scheduling Details
-                        const schedRes = await fetch(`${API_BASE}/schedule-promotion`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(scheduleData)
-                        });
-
-                        if (!schedRes.ok) {
-                          const err = await schedRes.json();
-                          setSuccessMsg('');
-                          setIsLaunching(false);
-                          alert(`Scheduling Failed: ${err.detail}`);
-                          return;
-                        }
-
-                        // 2. Launch Campaign (save MSISDNs)
-                        const launchRes = await fetch(`${API_BASE}/launch-campaign`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            msisdn_list: cleanedMsisdns,
-                            project_name: scheduleData.obd_name
-                          })
-                        });
-
-                        if (launchRes.ok) {
-                          const data = await launchRes.json();
-                          setSuccessMsg('SUCCESS');
-                          setIsLaunching(false);
-                        } else {
-                          const err = await launchRes.json();
-                          setIsLaunching(false);
-                          alert(`Launch Failed: ${err.detail || 'Internal Server Error'}`);
-                        }
-                      } catch (err) {
-                        setIsLaunching(false);
-                        alert(`Network Error: ${err.message}`);
-                      }
-                    }}
-                  >
-                    <Zap size={16} fill="white" className={isLaunching ? "animate-spin" : ""} />
-                    {isLaunching ? "Launching..." : "Initialize & Launch Campaign"}
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )
-    }
+        )
+      }
       {/* VIRTUAL IVR SIMULATOR MODAL */}
       <AnimatePresence>
         {activeVirtualCall && (
