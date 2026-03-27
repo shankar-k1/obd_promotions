@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: voice-generation-v1
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: NEXTAUTH_URL
+        fromContext: git.branch
+        value: https://voice-generation-v1.onrender.com
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: MURF_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

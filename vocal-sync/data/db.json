@@ -1,0 +1,56 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "name": "Admin",
+      "email": "admin@vocal-sync.com",
+      "password": "admin",
+      "role": "ADMIN"
+    },
+    {
+      "name": "test_user",
+      "email": "test@test.com",
+      "password": "test",
+      "role": "USER",
+      "id": "dnxxj2wf4"
+    }
+  ],
+  "settings": [
+    {
+      "key": "ELEVENLABS_API_KEY",
+      "value": "0ba65383f5ea57b2741b44620268f6712db6042f752e51fa52bbcd0c9b731874"
+    },
+    {
+      "key": "GROQ_API_KEY",
+      "value": ""
+    },
+    {
+      "key": "HUGGINGFACE_API_KEY",
+      "value": "admin@vocal-sync.com"
+    },
+    {
+      "key": "DEEPGRAM_API_KEY",
+      "value": "663967a135c395e25a9162a78ec98115400b0b9a"
+    },
+    {
+      "key": "MURF_API_KEY",
+      "value": "ap2_357cfb67-27f7-40ed-9dac-836e310871be"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "value": "your_openai_key"
+    },
+    {
+      "key": "ASSEMBLYAI_API_KEY",
+      "value": "5fed5d6891664ca38d3df69dd5a4033a"
+    },
+    {
+      "key": "FILE_SIZE_LIMIT_MB",
+      "value": "25"
+    },
+    {
+      "key": "CONCURRENT_USERS_LIMIT",
+      "value": "5"
+    }
+  ]
+}
